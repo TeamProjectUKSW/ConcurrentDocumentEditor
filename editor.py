@@ -1,6 +1,6 @@
 import tkinter as tk # for GUI
 from tkinter import filedialog, messagebox # for creating and saving editor window
-
+import concurrency
 
 class SimpleTextEditor:
     """
@@ -10,6 +10,7 @@ class SimpleTextEditor:
     Attributes:
         root (tk.Tk): The main application window.
         current_file_path (str or None): Path to the currently opened/saved file.
+        con(Concurrency): Object to handling multiuser features
         text (tk.Text): The text widget used for editing.
     """
     def __init__(self, root_):
@@ -19,9 +20,13 @@ class SimpleTextEditor:
         Args:
             root_ (tk.Tk): The main Tkinter window passed to the editor.
         """
+
         self.root = root_ # main tkinter window
+        self.con = concurrency.Concurrency(port_= 5005, port_send_ = 5010 ,root = self.root, editor_ = self)
+        self.con.get_shared_file()  # starts listening to other users if they want to share file
         self.root.title("Text editor") # title the window
         self.current_file_path = None # path to currently editing text file if such a file was opened in editor
+
 
         # toolbar
         toolbar = tk.Frame(self.root) # creates a frame for e.x. buttons
@@ -105,10 +110,12 @@ class SimpleTextEditor:
     #  PLACEHOLDER
     def share(self):
         """
-        Placeholder function for future sharing functionality.
-        Currently displays an information message.
+        Placeholder function for sharing files functionality.
+        Shares user's file to other users in order to work with the same document.
         """
-        messagebox.showinfo("Share")
+        messagebox.showinfo("Share", "File sharing in progress...")
+        content = self.text.get("1.0", tk.END).strip()
+        self.con.share_file(content)
 
     #TEST
     def insert_test_text(self):
@@ -116,7 +123,7 @@ class SimpleTextEditor:
         Insert a test message at the end of the text field and scroll to the bottom.
         Useful for simulating incoming messages or collaboration features.
         """
-        self.text.insert("end", "\n[Other user]: test message")
+        self.text.insert("end", "Hello world!")
         self.text.see("end")
     #
 
