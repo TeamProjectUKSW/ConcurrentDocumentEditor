@@ -22,8 +22,6 @@ class SimpleTextEditor:
         """
 
         self.root = root_ # main tkinter window
-        self.con = concurrency.Concurrency(port_= 5005, port_send_ = 5010 ,root = self.root, editor_ = self)
-        self.con.get_shared_file()  # starts listening to other users if they want to share file
         self.root.title("Text editor") # title the window
         self.current_file_path = None # path to currently editing text file if such a file was opened in editor
 
@@ -63,6 +61,9 @@ class SimpleTextEditor:
         scrollbar = tk.Scrollbar(text_frame, command=self.text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.text.config(yscrollcommand=scrollbar.set) # updates the scrollbar position
+
+        self.con = concurrency.Concurrency(port_=5005, port_send_=5010, root=self.root, editor_=self)
+        self.con.get_shared_file()  # starts listening to other users if they want to share file
 
     def open_file(self):
         """

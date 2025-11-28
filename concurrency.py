@@ -1,5 +1,6 @@
 import socket
 from tkinter import messagebox
+import tkinter as tk
 import threading
 import editor
 import netifaces
@@ -17,13 +18,14 @@ def get_local_ip():
 
 
 def get_all_local_ips():
-    ips = []
+    ips = dict()
     for iface in netifaces.interfaces():
         addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
         for addr in addrs:
-            ip = addr['addr']
-            if ip != "127.0.0.1":  # tylko loopback odrzucamy
-                ips.append(ip)
+            ip = addr.get('addr')
+            broadcast = addr.get('broadcast')
+            if ip != "127.0.0.1" and not ip.startswith("169.254."):
+                ips[ip] = broadcast
     return ips
 
 
@@ -34,13 +36,42 @@ class Concurrency(object):
         self.editor = editor_ if editor_ else editor.SimpleTextEditor(self.root)
         self.port = port_
         self.port_send = port_send_
-        hostname = socket.gethostname()
-        ips = socket.gethostbyname_ex(hostname)[2]
-        print("Dostępne IP kart sieciowych:")
-        print("\n".join(ips))
-        self.host = input("Podaj ip swojej karty - tej w  sieci: ")
-        print("Local IP:", self.host)
+        self.host = ''
 
+    def select_ip_gui(self):
+        def confirm_selection():
+            nonlocal selected_ip
+            nonlocal selected_bcast
+            selection = listbox.curselection()
+            if selection:
+                selected_ip = listbox.get(selection[0])
+                selected_bcast = ip_dict[selected_ip]
+                popup.destroy()
+                self.root.deiconify()
+                self.root.lift()
+                self.root.attributes('-topmost', True)
+                self.root.after(100, lambda: self.root.attributes('-topmost', False))
+            if not selection:
+                raise Exception("Please choose one IP")
+
+        hostname = socket.gethostname()
+        ip_dict = get_all_local_ips()
+        selected_ip = '' # poprawic!!!
+        selected_bcast = ''  # poprawic!!!
+        popup = tk.Toplevel(self.root)
+        popup.title("Choose IP of inet interface")
+        popup.grab_set()
+        popup.attributes('-topmost', True) # at the top, not hidden window
+        popup.update_idletasks() # in the middle
+        tk.Label(popup, text="Choose IP:").pack(pady=5)
+        listbox = tk.Listbox(popup, height=len(ip_dict), selectmode=tk.SINGLE)
+        for ip in ip_dict.keys():
+            listbox.insert(tk.END, ip)
+        listbox.pack(padx=10, pady=10)
+        tk.Button(popup, text="OK", command=confirm_selection).pack(pady=10)
+        popup.wait_window()
+        self.host = selected_ip
+        return {selected_ip:selected_bcast}
 
     def ask_to_load_file(self, data):
         answer = messagebox.askyesno("Load File", "Do you want to load file from other user?")
@@ -61,9 +92,7 @@ class Concurrency(object):
 
             while True:
                 data, addr = sock.recvfrom(1024)
-                print("Moje wszystkie karty sieciowe: ", local_ips)
-                print("Moj IP: ", self.host)
-                print("Adres,z którego odbieram dane: ", addr[0])
+                print("Address from which received data: ", addr[0])
                 if addr[0] in local_ips:
                     continue
                 print(f"Received from {addr}: {data.decode('utf-8')}")
@@ -76,12 +105,11 @@ class Concurrency(object):
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                print("!", self.host)
                 sock.bind(('', self.port_send))
-                bcast = input("Wpisz bcast sieci: ")
+                bcast = next(iter(self.select_ip_gui().values()))
+                print("Bcast:", bcast)
                 sock.sendto(text.encode('utf-8'), (bcast, self.port))
-                print(f"Wysłano broadcast: {text}")
-                print(sock.getsockname()[0])
+                print(f"Bcast sent: {text}")
         send_file_content()
 
 
