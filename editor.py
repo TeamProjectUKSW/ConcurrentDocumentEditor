@@ -1,9 +1,8 @@
 import tkinter as tk # for GUI
 from tkinter import filedialog, messagebox # for creating and saving editor window
-import concurrency
 import os
 
-class SimpleTextEditor:
+class BaseTextEditor:
     """
     A basic text editor application with features for opening, editing,
     saving, and sharing text files. It also supports multi-user collaboration
@@ -12,10 +11,9 @@ class SimpleTextEditor:
     Attributes:
         root (tk.Tk): The main application window.
         current_file_path (str or None): Path to the currently opened or saved file.
-        con (Concurrency): Object handling file sharing and multiuser features.
         text (tk.Text): The text widget used for content editing.
     """
-    def __init__(self, root_):
+    def __init__(self):
         """
         Initialize the text editor window, toolbar, buttons, and text area.
 
@@ -23,11 +21,9 @@ class SimpleTextEditor:
         a test button for demonstration, and initializes the text area
         with scrollbar support. Also starts a listener for receiving
         shared files over the network.
-
-        Args:
-            root_ (tk.Tk): The main Tkinter window passed to the editor.
         """
-        self.root = root_ # main tkinter window
+        self.root = tk.Tk()
+        self.root.geometry("800x600")
         self.root.title("Text editor") # title the window
         self.current_file_path = None # path to currently editing text file if such a file was opened in editor
 
@@ -49,7 +45,7 @@ class SimpleTextEditor:
         btn_save = tk.Button(toolbar, text="Save as", command=self.saveas_file)
         btn_save.pack(side=tk.LEFT, padx=2, pady=2)
 
-        btn_share = tk.Button(toolbar, text="Share", command=self.share)
+        btn_share = tk.Button(toolbar, text="Share", command=self.share_file)
         btn_share.pack(side=tk.LEFT, padx=2, pady=2)
 
         #test
@@ -70,9 +66,6 @@ class SimpleTextEditor:
         scrollbar = tk.Scrollbar(text_frame, command=self.text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.text.config(yscrollcommand=scrollbar.set) # updates the scrollbar position
-
-        self.con = concurrency.Concurrency(port_=5005, port_send_=5010, root=self.root, editor_=self)
-        self.con.get_shared_file()  # starts listening to other users if they want to share file
 
     def open_file(self):
         """
@@ -142,21 +135,6 @@ class SimpleTextEditor:
         messagebox.showinfo("Saved", f"File saved as:\n{self.current_file_path}")
         self.root.title(f"Text editor - {self.current_file_path}")
 
-    def share(self):
-        """
-        Share the current file content with other users in the same network.
-
-        Retrieves the full text from the editor and sends it via UDP broadcast
-        using the Concurrency class, enabling collaborative editing between users.
-        Displays a notification to indicate that the sharing process has started.
-
-        Note:
-            The receiving users will be asked whether they want to load the file.
-        """
-        messagebox.showinfo("Share", "File sharing in progress...")
-        content = self.text.get("1.0", tk.END).strip()
-        self.con.share_file(content)
-
     #TEST
     def insert_test_text(self):
         """
@@ -168,14 +146,7 @@ class SimpleTextEditor:
         self.text.insert("end", "Hello world!")
         self.text.see("end")
 
-def main():
-    root = tk.Tk()
-    root.geometry("800x600")  # mozna zmieniac poczatkowy rozmiar okna
-    SimpleTextEditor(root)
-    root.mainloop()
-    # user1 = concurrency.User(root)
-    # user1.start_text_monitoring()
-    # user1.monitor_text_changes()
+    def share_file(self):
+        pass
 
-if __name__ == "__main__":
-    main()
+

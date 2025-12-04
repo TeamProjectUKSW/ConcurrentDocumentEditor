@@ -2,7 +2,7 @@ import socket
 from tkinter import messagebox
 import tkinter as tk
 import threading
-import editor
+from editor import BaseTextEditor
 import netifaces
 import time
 
@@ -38,7 +38,7 @@ def get_all_local_ips():
 
 
 
-class Concurrency(object):
+class ConcurrentTextEditor(BaseTextEditor):
     """
     A class to enable concurrent file sharing between users via UDP broadcasting.
 
@@ -46,27 +46,20 @@ class Concurrency(object):
     listening for incoming files, and sending/shared files over the network.
 
     Attributes:
-        root (Tk): Tkinter root window.
-        editor (SimpleTextEditor): Editor object for file content handling.
-        port_listen (int): UDP port to listen for incoming file data.
-        port_send (int): UDP port to send file data.
-        host (str): Local IP address selected by the user.
-    """
-    def __init__(self, port_ = 5005, port_send_ = 5010, root = None, editor_ = None):
+        root (Tk): Tkinter root window.    """
+    def __init__(self):
         """
         Initialize the Concurrency instance.
 
-        Args:
-            port_ (int, optional): Port number for listening to incoming UDP data.
-            port_send_ (int, optional): Port number for sending UDP data.
-            root (Tk, optional): Tkinter root window for GUI operations.
-            editor_ (SimpleTextEditor, optional): Editor instance to manipulate text content.
         """
-        self.root = root
-        self.editor = editor_ if editor_ else editor.SimpleTextEditor(self.root)
-        self.port_listen = port_
-        self.port_send = port_send_
-        self.host = ''
+        super().__init__()
+        self.get_shared_file()  # starts listening to other users if they want to share file
+        self.user = User(port_listen_ = 5005, port_send_ = 5010) # zmien na automatyczny wybor portow!!!
+        self.last_notified_length = 0  # remembered characters number
+        self.start_text_monitoring()  # begin monitoringu
+
+    def run(self):
+        self.root.mainloop()
 
     def select_ip_gui(self):
         """
@@ -81,9 +74,9 @@ class Concurrency(object):
         def confirm_selection():
             nonlocal selected_ip, selected_bcast
             selection = listbox.curselection()
-            if not selection:  # jeśli nic nie zaznaczono
+            if not selection:  # nothing is selected
                 messagebox.showerror("Error", "Please select an IP address")
-                return  # nie zamykamy okna
+                return  # dont closing the window
             selected_ip = listbox.get(selection[0])
             selected_bcast = ip_dict[selected_ip]
             popup.destroy()
@@ -120,7 +113,7 @@ class Concurrency(object):
         tk.Button(popup, text = "Exit", command = exiting).pack(side=tk.LEFT, padx=10, pady=10)
 
         popup.wait_window()
-        self.host = selected_ip
+        self.user.host = selected_ip
         return {selected_ip: selected_bcast}
 
     def ask_to_load_file(self, data):
@@ -136,9 +129,9 @@ class Concurrency(object):
         answer = messagebox.askyesno("Load File", "Do you want to load file from other user?")
         if answer:
             print("Loading file...")
-            self.editor.text.delete("1.0", "end")
-            self.editor.text.insert("end", data)
-            self.editor.text.see("end")
+            self.root.text.delete("1.0", "end")
+            self.root.text.insert("end", data)
+            self.root.text.see("end")
         else:
             print("Refusing to load file")
 
@@ -152,8 +145,8 @@ class Concurrency(object):
         """
         def listen():
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind((self.host, self.port_listen))
-            print(f"Listening UDP on {self.host}:{self.port_listen} ...")
+            sock.bind((self.user.host, self.user.port_listen))
+            print(f"Listening UDP on {self.user.host}:{self.user.port_listen} ...")
 
             while True:
                 try:
@@ -161,39 +154,31 @@ class Concurrency(object):
                 except OSError as e:
                     print(f"Error: Check if shared file is less than maximum file size - 60kB: {e}")
                     return
-                if addr[0] == self.host:
+                if addr[0] == self.user.host:
                     continue
                 print(f"Received from {addr}: {data.decode('utf-8')}")
                 file_content = data.decode("utf-8")
                 self.root.after(0, lambda cnt=file_content: self.ask_to_load_file(cnt))
         threading.Thread(target=listen, daemon=True).start()
 
-    def share_file(self, text):
+    def share_file(self):
         """
         Broadcast editor text content to other users via UDP.
 
         Opens a UDP socket with broadcast capability and sends file content
         to other local network users.
-
-        Args:
-            text (str): The file content to broadcast.
         """
+        messagebox.showinfo("Share", "File sharing in progress...")
+        text = self.text.get("1.0", tk.END).strip()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(('', self.port_send))
+            sock.bind(('', self.user.port_send))
             bcast = next(iter(self.select_ip_gui().values()))
             print("Bcast:", bcast)
-            sock.sendto(text.encode('utf-8'), (bcast, self.port_listen))
-            sock.sendto(text.encode('utf-8'), (self.host[:8] + '255.255', self.port_listen))
+            sock.sendto(text.encode('utf-8'), (bcast, self.user.port_listen))
+            sock.sendto(text.encode('utf-8'), (self.user.host[:8] + '255.255', self.user.port_listen))
             print(f"Bcast sent")
-
-
-class User(Concurrency):
-    def __init__(self, root):
-        self.last_notified_length = 0  # zapamiętana liczba znaków
-        self.start_text_monitoring()  # uruchomienie monitoringu
-        self.root = root
 
     def start_text_monitoring(self):
         """Start a background thread to monitor text length."""
@@ -203,7 +188,7 @@ class User(Concurrency):
     def monitor_text_changes(self):
         """Monitor text widget and notify every time text grows by 10 new chars."""
         while True:
-            content = self.root.get("1.0", tk.END).strip()
+            content = self.text.get("1.0", tk.END).strip()
             current_length = len(content)
 
             if current_length >= self.last_notified_length + 10:
@@ -212,6 +197,14 @@ class User(Concurrency):
                     "Informacja", f"Wpisano {current_length} znaków!"
                 ))
             time.sleep(1)  # sprawdzaj co 1 sekundę
+
+class User(object):
+    def __init__(self, port_listen_ = 5005, port_send_ = 5010):
+        self.host = ''
+        self.port_listen = port_listen_
+        self.port_send = port_send_
+
+
 
 
 
