@@ -114,7 +114,9 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         popup.wait_window()
         self.user.host = selected_ip
-        return {selected_ip: selected_bcast}
+        self.user.bcast = selected_bcast
+        print("User host: ", selected_ip)
+        return selected_ip, selected_bcast
 
     def ask_to_load_file(self, data):
         """
@@ -129,9 +131,9 @@ class ConcurrentTextEditor(BaseTextEditor):
         answer = messagebox.askyesno("Load File", "Do you want to load file from other user?")
         if answer:
             print("Loading file...")
-            self.root.text.delete("1.0", "end")
-            self.root.text.insert("end", data)
-            self.root.text.see("end")
+            self.text.delete("1.0", "end")
+            self.text.insert("end", data)
+            self.text.see("end")
         else:
             print("Refusing to load file")
 
@@ -144,9 +146,11 @@ class ConcurrentTextEditor(BaseTextEditor):
         the file content.
         """
         def listen():
+            self.user.host, self.user.bcast = self.select_ip_gui()
+            ips = get_all_local_ips()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind((self.user.host, self.user.port_listen))
-            print(f"Listening UDP on {self.user.host}:{self.user.port_listen} ...")
+            sock.bind(('', self.user.port_listen))
+            print(f"Listening UDP on localhost:{self.user.port_listen} ...")
 
             while True:
                 try:
@@ -154,7 +158,7 @@ class ConcurrentTextEditor(BaseTextEditor):
                 except OSError as e:
                     print(f"Error: Check if shared file is less than maximum file size - 60kB: {e}")
                     return
-                if addr[0] == self.user.host:
+                if addr[0] in ips.keys():
                     continue
                 print(f"Received from {addr}: {data.decode('utf-8')}")
                 file_content = data.decode("utf-8")
@@ -174,10 +178,9 @@ class ConcurrentTextEditor(BaseTextEditor):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(('', self.user.port_send))
-            bcast = next(iter(self.select_ip_gui().values()))
-            print("Bcast:", bcast)
-            sock.sendto(text.encode('utf-8'), (bcast, self.user.port_listen))
-            sock.sendto(text.encode('utf-8'), (self.user.host[:8] + '255.255', self.user.port_listen))
+            print(self.user.bcast, self.user.port_listen)
+            sock.sendto(text.encode('utf-8'), (self.user.bcast, self.user.port_listen))
+            # sock.sendto(text.encode('utf-8'), (self.user.bcast[:8] + '255.255', self.user.port_listen))
             print(f"Bcast sent")
 
     def start_text_monitoring(self):
@@ -203,6 +206,7 @@ class User(object):
         self.host = ''
         self.port_listen = port_listen_
         self.port_send = port_send_
+        self.bcast = '255.255.255.255'
 
 
 
