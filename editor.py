@@ -98,8 +98,11 @@ class BaseTextEditor:
         dialog to let the user choose a location and file name. After saving,
         updates the window title and confirms success with a message box.
         """
-        content = self.text.get("1.0", tk.END) # writes all text from tk widget to content variable
-        with open(self.current_file_path, "w", encoding="utf-8") as f: # writing to the txt file
+        if not self.current_file_path:
+            return self.saveas_file()
+
+        content = self.text.get("1.0", tk.END)
+        with open(self.current_file_path, "w", encoding="utf-8") as f:
             f.write(content)
 
         messagebox.showinfo("Saved", f"File saved:\n{self.current_file_path}")
@@ -124,12 +127,17 @@ class BaseTextEditor:
             defaultextension=".txt",
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
         )
-        if not os.path.exists(os.path.dirname(file_path)):  # when user wants to save file in not existing directory
+        if not file_path:  # użytkownik kliknął Anuluj
+            return
+
+        dir_name = os.path.dirname(file_path)
+        if dir_name and not os.path.exists(dir_name):
             messagebox.showerror("Error", "Path does not exist!")
             return
+
         self.current_file_path = file_path
-        content = self.text.get("1.0", tk.END)  # writes all text from tk widget to content variable
-        with open(self.current_file_path, "w", encoding="utf-8") as f:  # writing to the txt file
+        content = self.text.get("1.0", tk.END)
+        with open(self.current_file_path, "w", encoding="utf-8") as f:
             f.write(content)
 
         messagebox.showinfo("Saved", f"File saved as:\n{self.current_file_path}")
