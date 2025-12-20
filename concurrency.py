@@ -5,6 +5,9 @@ import threading
 from editor import BaseTextEditor
 import netifaces
 import time
+import json
+import uuid
+
 
 def get_all_local_ips():
     """
@@ -53,135 +56,143 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         """
         super().__init__()
-        self.get_shared_file()  # starts listening to other users if they want to share file
-        self.user = User(port_listen_ = 5005, port_send_ = 5010) # zmien na automatyczny wybor portow!!!
+
+        self.user = User(port_listen_=5005, port_send_=5010)
+
+        self.client_id = str(uuid.uuid4())[:8]
+        self.user_name = self.client_id
+        self.peers = {}
+
+        self.get_shared_file()
+
         self.last_notified_length = 0  # remembered characters number
         self.start_text_monitoring()  # begin monitoringu
 
     def run(self):
         self.root.mainloop()
 
-    def select_ip_gui(self):
-        """
-        Display a GUI window for selecting a local IP address.
 
-        Creates a popup window listing available local IP addresses. The user
-        selects one, and the method assigns it as the host IP address.
+    def _handle_invite(self, msg, addr):
+        if msg["from_id"] == self.client_id:
+            return  #
 
-        Returns:
-            dict: A dictionary mapping the selected IP address to its broadcast address.
-        """
-        def confirm_selection():
-            nonlocal selected_ip, selected_bcast
-            selection = listbox.curselection()
-            if not selection:  # nothing is selected
-                messagebox.showerror("Error", "Please select an IP address")
-                return  # dont closing the window
-            selected_ip = listbox.get(selection[0])
-            selected_bcast = ip_dict[selected_ip]
-            popup.destroy()
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes('-topmost', True)
-            self.root.after(100, lambda: self.root.attributes('-topmost', False))
+        def ask():
+            ok = messagebox.askyesno(
+                "Share request",
+                f"{msg['from_name']} chce współdzielić dokument.\nAkceptujesz?"
+            )
+            if ok:
+                peer_ip = addr[0]
+                peer_port = msg["listen_port"]
 
-        def exiting():
-            popup.destroy()
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes('-topmost', True)
-            self.root.after(100, lambda: self.root.attributes('-topmost', False))
+                self._add_peer(msg["from_id"], peer_ip, peer_port, msg["from_name"])
 
-        ip_dict = get_all_local_ips()
-        selected_ip = ''
-        selected_bcast = ''
+                response = {
+                    "type": "INVITE_ACCEPT",
+                    "from_id": self.client_id,
+                    "from_name": self.user_name,
+                    "listen_port": self.user.port_listen
+                }
 
-        popup = tk.Toplevel(self.root)
-        popup.title("Choose IP of internet interface")
-        popup.grab_set()
-        popup.attributes('-topmost', True)
-        popup.update_idletasks()
+                payload = json.dumps(response).encode("utf-8")
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.sendto(payload, (peer_ip, peer_port))
 
-        tk.Label(popup, text="Choose IP:").pack(pady=5)
+        self.root.after(0, ask)
 
-        listbox = tk.Listbox(popup, height=len(ip_dict), selectmode=tk.SINGLE)
-        for ip in ip_dict.keys():
-            listbox.insert(tk.END, ip)
-        listbox.pack(padx=10, pady=10)
+    def _handle_invite_accept(self, msg, addr):
+        peer_ip = addr[0]
+        peer_port = msg["listen_port"]
 
-        tk.Button(popup, text="OK", command=confirm_selection).pack(side=tk.LEFT, padx=10, pady=10)
-        tk.Button(popup, text = "Exit", command = exiting).pack(side=tk.LEFT, padx=10, pady=10)
+        self._add_peer(msg["from_id"], peer_ip, peer_port, msg["from_name"])
 
-        popup.wait_window()
-        self.user.host = selected_ip
-        self.user.bcast = selected_bcast
-        print("User host: ", selected_ip)
-        return selected_ip, selected_bcast
+        messagebox.showinfo(
+            "Share",
+            f"{msg['from_name']} dołączył do sesji."
+        )
 
-    def ask_to_load_file(self, data):
-        """
-        Prompt the user to load received file content.
 
-        Displays a confirmation dialog asking if the user wants to load
-        the incoming file content into the editor.
+    def _handle_message(self, msg, addr):
+        msg_type = msg.get("type")
 
-        Args:
-            data (str): The text content to load into the editor.
-        """
-        answer = messagebox.askyesno("Load File", "Do you want to load file from other user?")
-        if answer:
-            print("Loading file...")
-            self.text.delete("1.0", "end")
-            self.text.insert("end", data)
-            self.text.see("end")
-        else:
-            print("Refusing to load file")
+        if msg_type == "INVITE":
+            self._handle_invite(msg, addr)
+
+        elif msg_type == "INVITE_ACCEPT":
+            self._handle_invite_accept(msg, addr)
+
+
+    def _add_peer(self, peer_id, ip, port, name):
+        self.peers[peer_id] = {
+            "ip": ip,
+            "port": port,
+            "name": name,
+            "last_seen": time.time()
+        }
+        print(f"[PEER] Dodano {name} ({ip}:{port})")
+
+
+    def auto_select_ip(self):
+        ips = get_all_local_ips()
+        ip, bcast = next(iter(ips.items()))
+        self.user.host = ip
+        self.user.bcast = bcast
+        print(f"[NET] Using {ip} / {bcast}")
 
     def get_shared_file(self):
         """
-        Start a background thread to listen for incoming UDP file data.
-
-        Opens a UDP socket on the specified listen port and continuously
-        receives data. When data arrives, it triggers the GUI prompt to load
-        the file content.
+        Start a background thread to listen for incoming UDP messages (CRDT + INVITE).
         """
         def listen():
-            self.user.host, self.user.bcast = self.select_ip_gui()
+            # automatyczny wybór interfejsu
+            self.auto_select_ip()
+
             ips = get_all_local_ips()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind(('', self.user.port_listen))
-            print(f"Listening UDP on localhost:{self.user.port_listen} ...")
+
+            print(f"[UDP] Listening on port {self.user.port_listen} ...")
 
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
                 except OSError as e:
-                    print(f"Error: Check if shared file is less than maximum file size - 60kB: {e}")
+                    print(f"[UDP ERROR] {e}")
                     return
-                if addr[0] in ips.keys():
+
+                if addr[0] in ips:
                     continue
-                print(f"Received from {addr}: {data.decode('utf-8')}")
-                file_content = data.decode("utf-8")
-                self.root.after(0, lambda cnt=file_content: self.ask_to_load_file(cnt))
+
+                try:
+                    msg = json.loads(data.decode("utf-8"))
+                except Exception as e:
+                    print("[UDP] Invalid JSON:", e)
+                    continue
+
+                self.root.after(0, lambda m=msg, a=addr: self._handle_message(m, a))
+
         threading.Thread(target=listen, daemon=True).start()
 
-    def share_file(self):
-        """
-        Broadcast editor text content to other users via UDP.
 
-        Opens a UDP socket with broadcast capability and sends file content
-        to other local network users.
-        """
-        messagebox.showinfo("Share", "File sharing in progress...")
-        text = self.text.get("1.0", tk.END).strip()
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
+
+    def share_file(self):
+        msg = {
+            "type": "INVITE",
+            "from_id": self.client_id,
+            "from_name": self.user_name,
+            "listen_port": self.user.port_listen
+        }
+
+        payload = json.dumps(msg).encode("utf-8")
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(('', self.user.port_send))
-            print(self.user.bcast, self.user.port_listen)
-            sock.sendto(text.encode('utf-8'), (self.user.bcast, self.user.port_listen))
-            # sock.sendto(text.encode('utf-8'), (self.user.bcast[:8] + '255.255', self.user.port_listen))
-            print(f"Bcast sent")
+            sock.sendto(payload, (self.user.bcast, self.user.port_listen))
+
+        messagebox.showinfo("Share", "Zaproszenie wysłane. Czekam na odpowiedzi.")
+
+    
+
 
     def start_text_monitoring(self):
         """Start a background thread to monitor text length."""
