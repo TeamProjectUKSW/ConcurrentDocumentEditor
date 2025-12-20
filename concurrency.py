@@ -284,19 +284,19 @@ class ConcurrentTextEditor(BaseTextEditor):
                 ))
             time.sleep(1)  # sprawdzaj co 1 sekundę
     def _on_key(self, event):
-    if self.applying_remote:
-        return
+        if self.applying_remote:
+            return
 
-    index = self.text.index(tk.INSERT)
+        index = self.text.index(tk.INSERT)
 
-    if event.keysym == "BackSpace":
-        self._broadcast_delete(index)
+        if event.keysym == "BackSpace":
+            self._broadcast_delete(index)
 
-    elif event.keysym == "Return":
-        self._broadcast_insert(index, "\n")
+        elif event.keysym == "Return":
+            self._broadcast_insert(index, "\n")
 
-    elif event.char:
-        self._broadcast_insert(index, event.char)
+        elif event.char:
+            self._broadcast_insert(index, event.char)
 
 
 class User(object):
