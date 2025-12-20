@@ -7,7 +7,6 @@ import netifaces
 import time
 import json
 import uuid
-DISCOVERY_PORT = 4999
 
 
 def get_all_local_ips():
@@ -63,11 +62,15 @@ class ConcurrentTextEditor(BaseTextEditor):
         self.client_id = str(uuid.uuid4())[:8]
         self.user_name = self.client_id
         self.peers = {}
+        self.crdt_counter = 0
+        self.applying_remote = False
+
 
         self.get_shared_file()
 
         self.last_notified_length = 0  # remembered characters number
         self.start_text_monitoring()  # begin monitoringu
+        self.text.bind("<Key>", self._on_key)
 
     def run(self):
         self.root.mainloop()
@@ -122,6 +125,13 @@ class ConcurrentTextEditor(BaseTextEditor):
         elif msg_type == "INVITE_ACCEPT":
             self._handle_invite_accept(msg, addr)
 
+        elif msg_type == "CRDT_INSERT":
+            self._apply_remote_insert(msg)
+
+        elif msg_type == "CRDT_DELETE":
+            self._apply_remote_delete(msg)
+
+
 
     def _add_peer(self, peer_id, ip, port, name):
         self.peers[peer_id] = {
@@ -139,6 +149,55 @@ class ConcurrentTextEditor(BaseTextEditor):
         self.user.host = ip
         self.user.bcast = bcast
         print(f"[NET] Using {ip} / {bcast}")
+    
+    def next_op_id(self):
+        self.crdt_counter += 1
+        return (self.crdt_counter, self.client_id)
+    
+    def _broadcast_insert(self, index, char):
+        op = {
+            "type": "CRDT_INSERT",
+            "id": self.next_op_id(),
+            "index": index,
+            "char": char
+        }
+        self._send_to_peers(op)
+    
+    def _broadcast_delete(self, index):
+        op = {
+            "type": "CRDT_DELETE",
+            "id": self.next_op_id(),
+            "index": index
+        }
+        self._send_to_peers(op)
+    
+    def _send_to_peers(self, msg):
+        payload = json.dumps(msg).encode("utf-8")
+
+        for peer in self.peers.values():
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(payload, (peer["ip"], peer["port"]))
+    
+    def _apply_remote_insert(self, msg):
+        self.applying_remote = True
+        try:
+            self.text.insert(msg["index"], msg["char"])
+        finally:
+            self.applying_remote = False
+    
+    def _apply_remote_delete(self, msg):
+        self.applying_remote = True
+        try:
+            index = msg["index"]
+            self.text.delete(f"{index}-1c")
+        finally:
+            self.applying_remote = False
+
+
+
+
+
+
 
     def get_shared_file(self):
         """
@@ -216,6 +275,17 @@ class ConcurrentTextEditor(BaseTextEditor):
                     "Informacja", f"Wpisano {current_length} znaków!"
                 ))
             time.sleep(1)  # sprawdzaj co 1 sekundę
+    def _on_key(self, event):
+        if self.applying_remote:
+            return
+
+        if event.char and event.char.isprintable():
+            index = self.text.index(tk.INSERT)
+            self._broadcast_insert(index, event.char)
+
+        elif event.keysym == "BackSpace":
+            index = self.text.index(tk.INSERT)
+            self._broadcast_delete(index)
 
 class User(object):
     def __init__(self, port_listen_ = 5005, port_send_ = 5010):
