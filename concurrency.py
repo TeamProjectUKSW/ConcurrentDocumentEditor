@@ -117,6 +117,14 @@ class ConcurrentTextEditor(BaseTextEditor):
 
 
     def _handle_message(self, msg, addr):
+
+        if msg.get("from_id") == self.client_id:
+            return
+
+        print(f"[RECV] from={addr} type={msg.get('type')} from_id={msg.get('from_id')} from_name={msg.get('from_name')}")
+        print(f"[ME]   my_id={self.client_id} my_name={self.user_name}")
+
+
         msg_type = msg.get("type")
 
         if msg_type == "INVITE":
