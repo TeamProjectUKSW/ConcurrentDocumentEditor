@@ -7,6 +7,7 @@ import netifaces
 import time
 import json
 import uuid
+DISCOVERY_PORT = 4999
 
 
 def get_all_local_ips():
@@ -149,9 +150,8 @@ class ConcurrentTextEditor(BaseTextEditor):
 
             ips = get_all_local_ips()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind(('', self.user.port_listen))
-
-            print(f"[UDP] Listening on port {self.user.port_listen} ...")
+            sock.bind(('', DISCOVERY_PORT))
+            print(f"[UDP] Listening for INVITE on {DISCOVERY_PORT} ...")
 
             while True:
                 try:
