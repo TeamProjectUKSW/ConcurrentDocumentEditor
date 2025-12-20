@@ -150,8 +150,8 @@ class ConcurrentTextEditor(BaseTextEditor):
 
             ips = get_all_local_ips()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind(('', DISCOVERY_PORT))
-            print(f"[UDP] Listening for INVITE on {DISCOVERY_PORT} ...")
+            sock.bind(('', self.user.port_listen))
+            print(f"[UDP] Listening for INVITE on {self.user.port_listen} ...")
 
             while True:
                 try:
@@ -185,9 +185,14 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         payload = json.dumps(msg).encode("utf-8")
 
+        ips = get_all_local_ips()
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.sendto(payload, (self.user.bcast, self.user.port_listen))
+            for ip, bcast in ips.items():
+                try:
+                    sock.sendto(payload, (bcast, self.user.port_listen))
+                except Exception as e:
+                    pass
 
         messagebox.showinfo("Share", "Zaproszenie wysłane. Czekam na odpowiedzi.")
 
