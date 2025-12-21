@@ -62,6 +62,10 @@ class BaseTextEditor:
         self.text = tk.Text(text_frame, wrap="word", undo=True)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
+        self.is_dirty = False
+        self.text.bind("<<Modified>>", self._on_modified)
+
+
         # creates vertical scrollbar
         scrollbar = tk.Scrollbar(text_frame, command=self.text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -89,6 +93,16 @@ class BaseTextEditor:
         self.text.insert("1.0", content)
         self.current_file_path = file_path
         self.root.title(f"Text editor - {file_path}")
+        self.is_dirty = False
+
+
+    def _on_modified(self, event=None):
+        self.is_dirty = True
+        try:
+            self.text.edit_modified(False)
+        except Exception:
+            pass
+
 
     def save_file(self):
         """
@@ -106,6 +120,7 @@ class BaseTextEditor:
             f.write(content)
 
         messagebox.showinfo("Saved", f"File saved:\n{self.current_file_path}")
+        self.is_dirty = False
         self.root.title(f"Text editor - {self.current_file_path}")
 
     def saveas_file(self):
@@ -141,6 +156,7 @@ class BaseTextEditor:
             f.write(content)
 
         messagebox.showinfo("Saved", f"File saved as:\n{self.current_file_path}")
+        self.is_dirty = False
         self.root.title(f"Text editor - {self.current_file_path}")
 
     #TEST

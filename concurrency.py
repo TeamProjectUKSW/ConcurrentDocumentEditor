@@ -75,32 +75,47 @@ class ConcurrentTextEditor(BaseTextEditor):
 
 
     def _handle_invite(self, msg, addr):
-        if msg["from_id"] == self.client_id:
-            return  #
+        if msg.get("from_id") == self.client_id:
+            return
 
         def ask():
             ok = messagebox.askyesno(
                 "Share request",
-                f"{msg['from_name']} chce współdzielić dokument.\nAkceptujesz?"
+                f"{msg.get('from_name', 'Inny użytkownik')} chce współdzielić dokument.\nAkceptujesz?"
             )
-            if ok:
-                peer_ip = addr[0]
-                peer_port = msg["listen_port"]
+            if not ok:
+                return
 
-                self._add_peer(msg["from_id"], peer_ip, peer_port, msg["from_name"])
+            if getattr(self, "is_dirty", False):
+                decision = self._prompt_unsaved_before_join()
 
-                response = {
-                    "type": "INVITE_ACCEPT",
-                    "from_id": self.client_id,
-                    "from_name": self.user_name,
-                    "listen_port": self.user.port_listen
-                }
+                if decision == "cancel":
+                    return
 
-                payload = json.dumps(response).encode("utf-8")
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                    sock.sendto(payload, (peer_ip, peer_port))
+                if decision == "save":
+                    self.save_file()
+
+                    if getattr(self, "is_dirty", False):
+                        return
+
+            peer_ip = addr[0]
+            peer_port = msg["listen_port"]
+
+            self._add_peer(msg["from_id"], peer_ip, peer_port, msg.get("from_name", peer_ip))
+
+            response = {
+                "type": "INVITE_ACCEPT",
+                "from_id": self.client_id,
+                "from_name": self.user_name,
+                "listen_port": self.user.port_listen
+            }
+
+            payload = json.dumps(response).encode("utf-8")
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(payload, (peer_ip, peer_port))
 
         self.root.after(0, ask)
+
 
     def _handle_invite_accept(self, msg, addr):
         peer_ip = addr[0]
@@ -200,8 +215,10 @@ class ConcurrentTextEditor(BaseTextEditor):
             text = msg.get("text", "")
             self.text.delete("1.0", tk.END)
             self.text.insert("1.0", text)
+            self.is_dirty = False
         finally:
             self.applying_remote = False
+
 
     
     def _apply_remote_delete(self, msg):
@@ -230,6 +247,37 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(payload, (peer["ip"], peer["port"]))
+    def _prompt_unsaved_before_join(self):
+
+        choice = {"value": "cancel"}
+
+        win = tk.Toplevel(self.root)
+        win.title("Niezapisane zmiany")
+        win.grab_set()
+        win.resizable(False, False)
+
+        tk.Label(
+            win,
+            text="Masz niezapisane zmiany.\nDołączenie do sesji nadpisze bieżącą zawartość.\nCo robimy?",
+            justify="left",
+            padx=12,
+            pady=10
+        ).pack()
+
+        btns = tk.Frame(win, padx=10, pady=10)
+        btns.pack(fill="x")
+
+        def set_choice(val):
+            choice["value"] = val
+            win.destroy()
+
+        tk.Button(btns, text="Zapisz zmiany", width=16, command=lambda: set_choice("save")).pack(side="left", padx=5)
+        tk.Button(btns, text="Odrzuć zmiany", width=16, command=lambda: set_choice("discard")).pack(side="left", padx=5)
+        tk.Button(btns, text="Anuluj", width=10, command=lambda: set_choice("cancel")).pack(side="left", padx=5)
+
+        win.wait_window()
+        return choice["value"]
+
 
 
 
