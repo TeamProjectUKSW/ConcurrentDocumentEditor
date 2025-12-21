@@ -110,10 +110,10 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         self._add_peer(msg["from_id"], peer_ip, peer_port, msg["from_name"])
 
-        messagebox.showinfo(
-            "Share",
-            f"{msg['from_name']} dołączył do sesji."
-        )
+        messagebox.showinfo("Share", f"{msg['from_name']} dołączył do sesji.")
+
+        self._send_snapshot_to_peer(msg["from_id"])
+
 
 
     def _handle_message(self, msg, addr):
@@ -138,6 +138,9 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         elif msg_type == "CRDT_DELETE":
             self._apply_remote_delete(msg)
+        elif msg_type == "SNAPSHOT":
+            self._apply_snapshot(msg)
+
 
 
 
@@ -193,6 +196,16 @@ class ConcurrentTextEditor(BaseTextEditor):
         finally:
             self.applying_remote = False
     
+    def _apply_snapshot(self, msg):
+        self.applying_remote = True
+        try:
+            text = msg.get("text", "")
+            self.text.delete("1.0", tk.END)
+            self.text.insert("1.0", text)
+        finally:
+            self.applying_remote = False
+
+    
     def _apply_remote_delete(self, msg):
         self.applying_remote = True
         try:
@@ -200,6 +213,26 @@ class ConcurrentTextEditor(BaseTextEditor):
             self.text.delete(f"{index}-1c")
         finally:
             self.applying_remote = False
+
+    def _send_snapshot_to_peer(self, peer_id):
+        peer = self.peers.get(peer_id)
+        if not peer:
+            return
+
+        current_text = self.text.get("1.0", tk.END)
+
+        msg = {
+            "type": "SNAPSHOT",
+            "from_id": self.client_id,
+            "from_name": self.user_name,
+            "text": current_text
+        }
+
+        payload = json.dumps(msg).encode("utf-8")
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(payload, (peer["ip"], peer["port"]))
+
 
 
 
@@ -227,8 +260,8 @@ class ConcurrentTextEditor(BaseTextEditor):
                     print(f"[UDP ERROR] {e}")
                     return
 
-                if addr[0] in ips:
-                    continue
+               # if addr[0] in ips:
+                   # continue
 
                 try:
                     msg = json.loads(data.decode("utf-8"))
