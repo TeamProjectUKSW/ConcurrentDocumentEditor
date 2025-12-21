@@ -68,8 +68,6 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         self.get_shared_file()
 
-        self.last_notified_length = 0  # remembered characters number
-        self.start_text_monitoring()  # begin monitoringu
         self.text.bind("<Key>", self._on_key)
 
     def run(self):
@@ -299,23 +297,6 @@ class ConcurrentTextEditor(BaseTextEditor):
     
 
 
-    def start_text_monitoring(self):
-        """Start a background thread to monitor text length."""
-        thread = threading.Thread(target=self.monitor_text_changes, daemon=True)
-        thread.start()
-
-    def monitor_text_changes(self):
-        """Monitor text widget and notify every time text grows by 10 new chars."""
-        while True:
-            content = self.text.get("1.0", tk.END).strip()
-            current_length = len(content)
-
-            if current_length >= self.last_notified_length + 10:
-                self.last_notified_length = current_length
-                self.root.after(0, lambda: messagebox.showinfo(
-                    "Informacja", f"Wpisano {current_length} znaków!"
-                ))
-            time.sleep(1)  # sprawdzaj co 1 sekundę
     def _on_key(self, event):
         if self.applying_remote:
             return
