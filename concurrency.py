@@ -1,28 +1,25 @@
 import socket
-from tkinter import messagebox
-import tkinter as tk
 import threading
-from editor import BaseTextEditor
-import netifaces
-import time
 import json
 import uuid
-
+import time
+import os
+import netifaces
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
+    QPushButton, QFileDialog, QMessageBox, QFontDialog
+)
+from PyQt6.QtCore import Qt
+from PyQt6.QtCore import pyqtSignal
 
 def get_all_local_ips():
     """
     Retrieve all local IPv4 addresses and their broadcast addresses.
 
-    Scans available network interfaces and collects valid local IP addresses
-    along with their broadcast addresses. Filters out loopback and APIPA addresses.
+    Ignores loopback and link-local addresses.
 
     Returns:
-        dict: A dictionary where keys are local IP addresses (str) and values
-              are corresponding broadcast addresses (str).
-              Example: {"192.168.1.10": "192.168.1.255"}
-
-    Raises:
-        Exception: If no valid IP addresses are found.
+        dict: Keys are local IP addresses, values are broadcast addresses.
     """
     ips = dict()
     try:
@@ -40,50 +37,222 @@ def get_all_local_ips():
     return ips
 
 
-
-class ConcurrentTextEditor(BaseTextEditor):
+class ConcurrentTextEditor(QWidget):
     """
-    A class to enable concurrent file sharing between users via UDP broadcasting.
+    A PyQt6-based concurrent text editor with CRDT and UDP file sharing support.
 
-    This class handles network configuration, GUI interface for IP selection,
-    listening for incoming files, and sending/shared files over the network.
+    This editor allows multiple users to collaboratively edit a text file
+    over a local network using UDP broadcasts and CRDT-based operational transforms.
 
     Attributes:
-        root (Tk): Tkinter root window.    """
+        user (User): Network configuration object for sending/listening UDP messages.
+        client_id (str): Unique identifier of this client.
+        user_name (str): Name of this user (defaults to client_id).
+        peers (dict): Dictionary of connected peers.
+        crdt_counter (int): Counter for CRDT operations.
+        applying_remote (bool): Flag to avoid broadcasting remote changes.
+        theme_state (int): Tracks current theme 0 = light, 1 = dark, 2 = cream 3 = mint.
+        text (QTextEdit): Main text editing widget.
+    """
+    message_received = pyqtSignal(dict, tuple)
     def __init__(self):
-        """
-        Initialize the Concurrency instance.
-
-        """
+        """Initialize the editor, GUI, network, and CRDT event handling."""
         super().__init__()
+        self.message_received.connect(self._handle_message)
+        self.seen_invites = set()
 
+        self.setWindowTitle("Concurrent Text Editor")
+        self.resize(800, 600)
+
+        # Initialize network/user
         self.user = User(port_listen_=5005, port_send_=5010)
-
         self.client_id = str(uuid.uuid4())[:8]
         self.user_name = self.client_id
         self.peers = {}
         self.crdt_counter = 0
         self.applying_remote = False
 
+        #  GUI Setup
+        self.is_dirty = False
+        main_layout = QVBoxLayout()
+        toolbar_layout = QHBoxLayout()
+        main_layout.addLayout(toolbar_layout)
+        self.setLayout(main_layout)
 
+        # QTextEdit
+        self.text = QTextEdit()
+        self.text.setAcceptRichText(False)
+        self.text.textChanged.connect(self._on_modified)
+        main_layout.addWidget(self.text)
+
+        #  Toolbar buttons
+        self._add_toolbar_button(toolbar_layout, "Open", self.open_file)
+        self._add_toolbar_button(toolbar_layout, "Save", self.save_file)
+        self._add_toolbar_button(toolbar_layout, "Save as", self.saveas_file)
+        self._add_toolbar_button(toolbar_layout, "Share", self.share_file)
+        self._add_toolbar_button(toolbar_layout, "Add test", self.insert_test_text)
+        self._add_toolbar_button(toolbar_layout, "Change font", self.change_font)
+        self._add_toolbar_button(toolbar_layout, "Toggle theme", self.toggle_theme)
+
+        # -Default theme
+        self.theme_state = 0  # 0=light, 1=dark, 2=navy
+        self.set_light_theme()
+
+        # Start listening thread
         self.get_shared_file()
 
-        self.text.bind("<Key>", self._on_key)
+        # Connect key events for CRDT
+        self.text.keyPressEvent = self._on_key
 
-    def run(self):
-        self.root.mainloop()
 
+    #  GUI helper
+    def _add_toolbar_button(self, layout, text, callback):
+        """
+        Add a QPushButton to the toolbar with a given label and callback.
+
+        Args:
+            layout (QLayout): The toolbar layout to add the button to.
+            text (str): Button label.
+            callback (function): Function to call when button is clicked.
+        """
+        btn = QPushButton(text)
+        btn.clicked.connect(callback)
+        layout.addWidget(btn)
+
+    #  Theme methods
+    def set_light_theme(self):
+        """Set a light theme for the editor."""
+        self.setStyleSheet("""
+            QWidget { background-color: #f9f9f9; color: #1e1e1e; }
+            QTextEdit { background-color: #ffffff; color: #000000; }
+            QPushButton { background-color: #e0e0e0; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #d0d0d0; }
+        """)
+        self.theme_state = 0
+
+    def set_dark_theme(self):
+        """Set a dark theme for the editor."""
+        self.setStyleSheet("""
+            QWidget { background-color: #2b2b2b; color: #f0f0f0; }
+            QTextEdit { background-color: #3c3f41; color: #f0f0f0; }
+            QPushButton { background-color: #505357; color: #f0f0f0; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #606367; }
+        """)
+        self.theme_state = 1
+
+    def set_cream_theme(self):
+        """Set a warm cream theme, easy on the eyes for text editing."""
+        self.setStyleSheet("""
+            QWidget { background-color: #fff8e7; color: #2e2e2e; }
+            QTextEdit { background-color: #fffdf4; color: #1e1e1e; }
+            QPushButton { background-color: #f0e6d2; color: #2e2e2e; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #e6dabe; }
+        """)
+        self.theme_state = 2  # przypisujemy nowy stan
+
+    def set_mint_theme(self):
+        """Set a soft mint theme for a fresh look."""
+        self.setStyleSheet("""
+            QWidget { background-color: #e6f7f1; color: #1e1e1e; }
+            QTextEdit { background-color: #f0fcf9; color: #1e1e1e; }
+            QPushButton { background-color: #ccebe1; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #b3ded2; }
+        """)
+        self.theme_state = 3
+
+    def toggle_theme(self):
+        """Cycle through available themes"""
+        if self.theme_state == 0:
+            self.set_dark_theme()
+        elif self.theme_state == 1:
+            self.set_cream_theme()
+        elif self.theme_state == 2:
+            self.set_mint_theme()
+        else:
+            self.set_light_theme()
+
+    # - Font selection
+    def change_font(self):
+        """Open a font selection dialog and apply the chosen font to the editor."""
+        font, ok = QFontDialog.getFont()
+        if ok:
+            self.text.setFont(font)
+
+    # --- File/Editor logic ---
+    def _on_modified(self):
+        """Mark document as modified when text changes."""
+        self.is_dirty = True
+
+    def open_file(self):
+        """Open a text file and load its contents into the editor."""
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open file", "", "Text files (*.txt);;All files (*)")
+        if not file_path:
+            return
+        with open(file_path, "r", encoding="utf-8") as f:
+            self.text.setPlainText(f.read())
+        self.current_file_path = file_path
+        self.setWindowTitle(f"Text editor - {file_path}")
+        self.is_dirty = False
+
+    def save_file(self):
+        """Save current file, or prompt Save As if no file exists."""
+        if not getattr(self, "current_file_path", None):
+            return self.saveas_file()
+        content = self.text.toPlainText()
+        with open(self.current_file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        QMessageBox.information(self, "Saved", f"File saved:\n{self.current_file_path}")
+        self.is_dirty = False
+
+    def saveas_file(self):
+        """Open Save As dialog and save editor content to a chosen path."""
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save file", "", "Text files (*.txt);;All files (*)")
+        if not file_path:
+            return
+        dir_name = os.path.dirname(file_path)
+        if dir_name and not os.path.exists(dir_name):
+            QMessageBox.critical(self, "Error", "Path does not exist!")
+            return
+        self.current_file_path = file_path
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(self.text.toPlainText())
+        QMessageBox.information(self, "Saved", f"File saved as:\n{file_path}")
+        self.is_dirty = False
+
+    def insert_test_text(self):
+        """Append sample text to the editor for testing purposes."""
+        self.text.append("Hello world!")
+
+    def _apply_snapshot(self, msg):
+        self.applying_remote = True
+        try:
+            text = msg.get("text", "")
+            self.text.setPlainText(text)
+            self.is_dirty = False
+        finally:
+            self.applying_remote = False
 
     def _handle_invite(self, msg, addr):
         if msg.get("from_id") == self.client_id:
             return
 
+        invite_id = msg.get("invite_id")
+
+        if invite_id in self.seen_invites:
+            return
+
+        # ✅ zapamiętaj że już obsłużone
+        self.seen_invites.add(invite_id)
+
         def ask():
-            ok = messagebox.askyesno(
+            reply = QMessageBox.question(
+                self,
                 "Share request",
-                f"{msg.get('from_name', 'Inny użytkownik')} chce współdzielić dokument.\nAkceptujesz?"
+                f"{msg.get('from_name', 'Inny użytkownik')} chce współdzielić dokument.\nAkceptujesz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            if not ok:
+
+            if reply != QMessageBox.StandardButton.Yes:
                 return
 
             if getattr(self, "is_dirty", False):
@@ -91,17 +260,20 @@ class ConcurrentTextEditor(BaseTextEditor):
 
                 if decision == "cancel":
                     return
-
                 if decision == "save":
                     self.save_file()
-
                     if getattr(self, "is_dirty", False):
                         return
 
             peer_ip = addr[0]
             peer_port = msg["listen_port"]
 
-            self._add_peer(msg["from_id"], peer_ip, peer_port, msg.get("from_name", peer_ip))
+            self._add_peer(
+                msg["from_id"],
+                peer_ip,
+                peer_port,
+                msg.get("from_name", peer_ip)
+            )
 
             response = {
                 "type": "INVITE_ACCEPT",
@@ -114,8 +286,8 @@ class ConcurrentTextEditor(BaseTextEditor):
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.sendto(payload, (peer_ip, peer_port))
 
-        self.root.after(0, ask)
-
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, ask)
 
     def _handle_invite_accept(self, msg, addr):
         peer_ip = addr[0]
@@ -123,20 +295,22 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         self._add_peer(msg["from_id"], peer_ip, peer_port, msg["from_name"])
 
-        messagebox.showinfo("Share", f"{msg['from_name']} dołączył do sesji.")
+        QMessageBox.information(
+            self,
+            "Share",
+            f"{msg['from_name']} dołączył do sesji."
+        )
 
         self._send_snapshot_to_peer(msg["from_id"])
-
-
 
     def _handle_message(self, msg, addr):
 
         if msg.get("from_id") == self.client_id:
             return
 
-        print(f"[RECV] from={addr} type={msg.get('type')} from_id={msg.get('from_id')} from_name={msg.get('from_name')}")
+        print(
+            f"[RECV] from={addr} type={msg.get('type')} from_id={msg.get('from_id')} from_name={msg.get('from_name')}")
         print(f"[ME]   my_id={self.client_id} my_name={self.user_name}")
-
 
         msg_type = msg.get("type")
 
@@ -154,9 +328,6 @@ class ConcurrentTextEditor(BaseTextEditor):
         elif msg_type == "SNAPSHOT":
             self._apply_snapshot(msg)
 
-
-
-
     def _add_peer(self, peer_id, ip, port, name):
         self.peers[peer_id] = {
             "ip": ip,
@@ -166,66 +337,108 @@ class ConcurrentTextEditor(BaseTextEditor):
         }
         print(f"[PEER] Dodano {name} ({ip}:{port})")
 
+    # --- CRDT/Networking logic ---
+    def get_shared_file(self):
+        def listen():
+            self.auto_select_ip()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.bind(('', self.user.port_listen))
+            print(f"[UDP] Listening on {self.user.port_listen} ...")
+            while True:
+                try:
+                    data, addr = sock.recvfrom(65535)
+                    msg = json.loads(data.decode("utf-8"))
+
+                    # 🔥 PRZEJŚCIE DO WĄTKU GUI
+                    self.message_received.emit(msg, addr)
+
+                except Exception as e:
+                    print("[UDP ERROR]", e)
+
+        threading.Thread(target=listen, daemon=True).start()
 
     def auto_select_ip(self):
+        """Automatically select a local IP and broadcast address for networking."""
         ips = get_all_local_ips()
         ip, bcast = next(iter(ips.items()))
         self.user.host = ip
         self.user.bcast = bcast
         print(f"[NET] Using {ip} / {bcast}")
-    
+
+    def share_file(self):
+        """Broadcast an INVITE message to peers on the local network."""
+        self.invite_id = str(uuid.uuid4())
+        msg = {
+            "type": "INVITE",
+            "from_id": self.client_id,
+            "from_name": self.user_name,
+            "listen_port": self.user.port_listen
+        }
+        payload = json.dumps(msg).encode("utf-8")
+        ips = get_all_local_ips()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            for ip, bcast in ips.items():
+                try:
+                    sock.sendto(payload, (bcast, self.user.port_listen))
+                except Exception:
+                    pass
+        QMessageBox.information(self, "Share", "Zaproszenie wysłane. Czekam na odpowiedzi.")
+
+    def _on_key(self, event):
+        """Handle key events for broadcasting CRDT inserts/deletes (Qt version)."""
+        if self.applying_remote:
+            return
+        cursor = self.text.textCursor()
+        index = cursor.position()
+        if event.key() == Qt.Key.Key_Backspace:
+            self._broadcast_delete(index)
+        elif event.key() == Qt.Key.Key_Return:
+            self._broadcast_insert(index, "\n")
+        elif event.text():
+            self._broadcast_insert(index, event.text())
+        QTextEdit.keyPressEvent(self.text, event)
+
+    # --- CRDT broadcast helpers ---
     def next_op_id(self):
+        """Generate a new CRDT operation ID as a tuple (counter, client_id)."""
         self.crdt_counter += 1
         return (self.crdt_counter, self.client_id)
-    
-    def _broadcast_insert(self, index, char):
-        op = {
-            "type": "CRDT_INSERT",
-            "id": self.next_op_id(),
-            "index": index,
-            "char": char
-        }
-        self._send_to_peers(op)
-    
-    def _broadcast_delete(self, index):
-        op = {
-            "type": "CRDT_DELETE",
-            "id": self.next_op_id(),
-            "index": index
-        }
-        self._send_to_peers(op)
-    
-    def _send_to_peers(self, msg):
-        payload = json.dumps(msg).encode("utf-8")
 
+    def _broadcast_insert(self, index, char):
+        """Broadcast a CRDT insert operation to all connected peers."""
+        op = {"type": "CRDT_INSERT", "id": self.next_op_id(), "index": index, "char": char}
+        self._send_to_peers(op)
+
+    def _broadcast_delete(self, index):
+        """Broadcast a CRDT delete operation to all connected peers."""
+        op = {"type": "CRDT_DELETE", "id": self.next_op_id(), "index": index}
+        self._send_to_peers(op)
+
+    def _send_to_peers(self, msg):
+        """Send a JSON message via UDP to all connected peers."""
+        payload = json.dumps(msg).encode("utf-8")
         for peer in self.peers.values():
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.sendto(payload, (peer["ip"], peer["port"]))
-    
+
     def _apply_remote_insert(self, msg):
+        """Apply a remote insert operation locally without rebroadcasting."""
         self.applying_remote = True
         try:
-            self.text.insert(msg["index"], msg["char"])
-        finally:
-            self.applying_remote = False
-    
-    def _apply_snapshot(self, msg):
-        self.applying_remote = True
-        try:
-            text = msg.get("text", "")
-            self.text.delete("1.0", tk.END)
-            self.text.insert("1.0", text)
-            self.is_dirty = False
+            cursor = self.text.textCursor()
+            cursor.setPosition(msg["index"])
+            cursor.insertText(msg["char"])
         finally:
             self.applying_remote = False
 
-
-    
     def _apply_remote_delete(self, msg):
+        """Apply a remote delete operation locally without rebroadcasting."""
         self.applying_remote = True
         try:
-            index = msg["index"]
-            self.text.delete(f"{index}-1c")
+            cursor = self.text.textCursor()
+            cursor.setPosition(msg["index"] - 1)
+            cursor.deleteChar()
         finally:
             self.applying_remote = False
 
@@ -234,7 +447,7 @@ class ConcurrentTextEditor(BaseTextEditor):
         if not peer:
             return
 
-        current_text = self.text.get("1.0", tk.END)
+        current_text = self.text.toPlainText()
 
         msg = {
             "type": "SNAPSHOT",
@@ -247,133 +460,42 @@ class ConcurrentTextEditor(BaseTextEditor):
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(payload, (peer["ip"], peer["port"]))
+
     def _prompt_unsaved_before_join(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Niezapisane zmiany")
+        msg.setText(
+            "Masz niezapisane zmiany.\n"
+            "Dołączenie do sesji nadpisze bieżącą zawartość.\n"
+            "Co robimy?"
+        )
 
-        choice = {"value": "cancel"}
+        save_btn = msg.addButton("Zapisz zmiany", QMessageBox.ButtonRole.AcceptRole)
+        discard_btn = msg.addButton("Odrzuć zmiany", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = msg.addButton("Anuluj", QMessageBox.ButtonRole.RejectRole)
 
-        win = tk.Toplevel(self.root)
-        win.title("Niezapisane zmiany")
-        win.grab_set()
-        win.resizable(False, False)
+        msg.exec()
 
-        tk.Label(
-            win,
-            text="Masz niezapisane zmiany.\nDołączenie do sesji nadpisze bieżącą zawartość.\nCo robimy?",
-            justify="left",
-            padx=12,
-            pady=10
-        ).pack()
-
-        btns = tk.Frame(win, padx=10, pady=10)
-        btns.pack(fill="x")
-
-        def set_choice(val):
-            choice["value"] = val
-            win.destroy()
-
-        tk.Button(btns, text="Zapisz zmiany", width=16, command=lambda: set_choice("save")).pack(side="left", padx=5)
-        tk.Button(btns, text="Odrzuć zmiany", width=16, command=lambda: set_choice("discard")).pack(side="left", padx=5)
-        tk.Button(btns, text="Anuluj", width=10, command=lambda: set_choice("cancel")).pack(side="left", padx=5)
-
-        win.wait_window()
-        return choice["value"]
+        clicked = msg.clickedButton()
+        if clicked == save_btn:
+            return "save"
+        elif clicked == discard_btn:
+            return "discard"
+        return "cancel"
 
 
+class User:
+    """Network configuration for sending and receiving UDP messages."""
 
-
-
-
-
-
-
-    def get_shared_file(self):
+    def __init__(self, port_listen_=5005, port_send_=5010):
         """
-        Start a background thread to listen for incoming UDP messages (CRDT + INVITE).
+        Initialize a User network object.
+
+        Args:
+            port_listen_ (int): UDP port to listen for incoming messages.
+            port_send_ (int): UDP port to send outgoing messages.
         """
-        def listen():
-            # automatyczny wybór interfejsu
-            self.auto_select_ip()
-
-            ips = get_all_local_ips()
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind(('', self.user.port_listen))
-            print(f"[UDP] Listening for INVITE on {self.user.port_listen} ...")
-
-            while True:
-                try:
-                    data, addr = sock.recvfrom(65535)
-                except OSError as e:
-                    print(f"[UDP ERROR] {e}")
-                    return
-
-               # if addr[0] in ips:
-                   # continue
-
-                try:
-                    msg = json.loads(data.decode("utf-8"))
-                except Exception as e:
-                    print("[UDP] Invalid JSON:", e)
-                    continue
-
-                self.root.after(0, lambda m=msg, a=addr: self._handle_message(m, a))
-
-        threading.Thread(target=listen, daemon=True).start()
-
-
-
-    def share_file(self):
-        msg = {
-            "type": "INVITE",
-            "from_id": self.client_id,
-            "from_name": self.user_name,
-            "listen_port": self.user.port_listen
-        }
-
-        payload = json.dumps(msg).encode("utf-8")
-
-        ips = get_all_local_ips()
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            for ip, bcast in ips.items():
-                try:
-                    sock.sendto(payload, (bcast, self.user.port_listen))
-                except Exception as e:
-                    pass
-
-        messagebox.showinfo("Share", "Zaproszenie wysłane. Czekam na odpowiedzi.")
-
-    
-
-
-    def _on_key(self, event):
-        if self.applying_remote:
-            return
-
-        index = self.text.index(tk.INSERT)
-
-        if event.keysym == "BackSpace":
-            self._broadcast_delete(index)
-
-        elif event.keysym == "Return":
-            self._broadcast_insert(index, "\n")
-
-        elif event.char:
-            self._broadcast_insert(index, event.char)
-
-
-class User(object):
-    def __init__(self, port_listen_ = 5005, port_send_ = 5010):
         self.host = ''
         self.port_listen = port_listen_
         self.port_send = port_send_
         self.bcast = '255.255.255.255'
-
-
-
-
-
-
-
-
-
-

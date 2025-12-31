@@ -1,9 +1,14 @@
 from concurrency import ConcurrentTextEditor
+from PyQt6.QtWidgets import QApplication
 import sys
 
+
 def main():
-    app = ConcurrentTextEditor()
-    app.run()
+    app = QApplication(sys.argv)  # Tworzymy QApplication raz
+    editor = ConcurrentTextEditor()
+    editor.show()
+    sys.exit(app.exec())  # uruchamiamy event loop
+
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

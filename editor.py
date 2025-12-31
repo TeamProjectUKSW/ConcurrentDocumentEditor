@@ -1,176 +1,203 @@
-import tkinter as tk # for GUI
-from tkinter import filedialog, messagebox # for creating and saving editor window
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
+    QPushButton, QFileDialog, QMessageBox, QFontDialog
+)
+from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt
+import sys
 import os
 
-class BaseTextEditor:
+class BaseTextEditor(QWidget):
     """
-    A basic text editor application with features for opening, editing,
-    saving, and sharing text files. It also supports multi-user collaboration
-    through networking, using the Concurrency class.
+    A basic text editor implemented with PyQt6.
+
+    Provides functionalities for opening, saving, editing text files, changing
+    fonts, toggling themes, and inserting test text. Designed as a base class
+    for more advanced editors with networking or CRDT support.
 
     Attributes:
-        root (tk.Tk): The main application window.
-        current_file_path (str or None): Path to the currently opened or saved file.
-        text (tk.Text): The text widget used for content editing.
+        current_file_path (str | None): Path of the currently open file.
+        is_dirty (bool): Flag indicating if the text has been modified.
+        text (QTextEdit): Main text editing widget.
+        theme_state (int): Current theme state (0=light, 1=dark, 2=cream, 3=mint).
     """
     def __init__(self):
-        """
-        Initialize the text editor window, toolbar, buttons, and text area.
-
-        Sets up buttons for file operations (open, save, share), adds
-        a test button for demonstration, and initializes the text area
-        with scrollbar support. Also starts a listener for receiving
-        shared files over the network.
-        """
-        self.root = tk.Tk()
-        self.root.geometry("800x600")
-        self.root.title("Text editor") # title the window
-        self.current_file_path = None # path to currently editing text file if such a file was opened in editor
-
-
-        # toolbar
-        toolbar = tk.Frame(self.root) # creates a frame for e.x. buttons
-        toolbar.pack(side=tk.TOP, fill=tk.X) # puts this frame at the top of the window
-
-        #  buttons
-        # tk.Button - creates a certain button at the toolbar
-        # command=self is a function that is called after pressing the button
-        # .pack(side... ) - puts the bottoms in right places and puts gaps between them
-        btn_open = tk.Button(toolbar, text="Open", command=self.open_file)
-        btn_open.pack(side=tk.LEFT, padx=2, pady=2)
-
-        btn_save = tk.Button(toolbar, text="Save", command=self.save_file)
-        btn_save.pack(side=tk.LEFT, padx=2, pady=2)
-
-        btn_save = tk.Button(toolbar, text="Save as", command=self.saveas_file)
-        btn_save.pack(side=tk.LEFT, padx=2, pady=2)
-
-        btn_share = tk.Button(toolbar, text="Share", command=self.share_file)
-        btn_share.pack(side=tk.LEFT, padx=2, pady=2)
-
-        #test
-        btn_test = tk.Button(toolbar, text="Add test", command=self.insert_test_text)
-        btn_test.pack(side=tk.LEFT, padx=2, pady=2)
-
-        # text field
-        text_frame = tk.Frame(self.root)
-        text_frame.pack(fill=tk.BOTH, expand=True)
-
-        # undo=true enables to use ctrl + z
-        # ctrl+c,v,x work by default
-        # wrap="word" automatically put words at the next line after reahing the end of the text window
-        self.text = tk.Text(text_frame, wrap="word", undo=True)
-        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
+        """Initialize the text editor, GUI components, and default theme."""
+        super().__init__()
+        self.setWindowTitle("Text editor")
+        self.resize(800, 600)
+        self.current_file_path = None
         self.is_dirty = False
-        self.text.bind("<<Modified>>", self._on_modified)
 
+        # Layout setup
+        main_layout = QVBoxLayout()
+        toolbar_layout = QHBoxLayout()
+        main_layout.addLayout(toolbar_layout)
+        self.setLayout(main_layout)
 
-        # creates vertical scrollbar
-        scrollbar = tk.Scrollbar(text_frame, command=self.text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.text.config(yscrollcommand=scrollbar.set) # updates the scrollbar position
+        # QTextEdit setup
+        self.text = QTextEdit()
+        self.text.setAcceptRichText(False)  # plain text only
+        self.text.textChanged.connect(self._on_modified)
+        main_layout.addWidget(self.text)
 
+        # Toolbar buttons
+        btn_open = QPushButton("Open")
+        btn_open.clicked.connect(self.open_file)
+        toolbar_layout.addWidget(btn_open)
+
+        btn_save = QPushButton("Save")
+        btn_save.clicked.connect(self.save_file)
+        toolbar_layout.addWidget(btn_save)
+
+        btn_saveas = QPushButton("Save as")
+        btn_saveas.clicked.connect(self.saveas_file)
+        toolbar_layout.addWidget(btn_saveas)
+
+        btn_share = QPushButton("Share")
+        btn_share.clicked.connect(self.share_file)
+        toolbar_layout.addWidget(btn_share)
+
+        btn_test = QPushButton("Add test")
+        btn_test.clicked.connect(self.insert_test_text)
+        toolbar_layout.addWidget(btn_test)
+
+        btn_font = QPushButton("Change font")
+        btn_font.clicked.connect(self.change_font)
+        toolbar_layout.addWidget(btn_font)
+
+        btn_theme = QPushButton("Toggle theme")
+        btn_theme.clicked.connect(self.toggle_theme)
+        toolbar_layout.addWidget(btn_theme)
+
+        # --- Default theme ---
+        self.theme_state = 0  # 0=light, 1=dark, 2=cream, 3=mint
+        self.set_light_theme()
+
+    # Theme methods
+    def set_light_theme(self):
+        """Set a light, high-contrast theme for the editor."""
+        self.setStyleSheet("""
+            QWidget { background-color: #f9f9f9; color: #1e1e1e; }
+            QTextEdit { background-color: #ffffff; color: #000000; }
+            QPushButton { background-color: #e0e0e0; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #d0d0d0; }
+        """)
+        self.theme_state = 0
+
+    def set_dark_theme(self):
+        """Set a dark theme suitable for low-light environments."""
+        self.setStyleSheet("""
+            QWidget { background-color: #2b2b2b; color: #f0f0f0; }
+            QTextEdit { background-color: #3c3f41; color: #f0f0f0; }
+            QPushButton { background-color: #505357; color: #f0f0f0; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #606367; }
+        """)
+        self.theme_state = 1
+
+    def set_cream_theme(self):
+        """Set a warm cream theme that is easy on the eyes for reading text."""
+        self.setStyleSheet("""
+            QWidget { background-color: #fff8e7; color: #2e2e2e; }
+            QTextEdit { background-color: #fffdf4; color: #1e1e1e; }
+            QPushButton { background-color: #f0e6d2; color: #2e2e2e; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #e6dabe; }
+        """)
+        self.theme_state = 2
+
+    def set_mint_theme(self):
+        """Set a soft mint theme for a fresh and relaxing look."""
+        self.setStyleSheet("""
+            QWidget { background-color: #e6f7f1; color: #1e1e1e; }
+            QTextEdit { background-color: #f0fcf9; color: #1e1e1e; }
+            QPushButton { background-color: #ccebe1; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
+            QPushButton:hover { background-color: #b3ded2; }
+        """)
+        self.theme_state = 3
+
+    def toggle_theme(self):
+        """Cycle through available themes: light → dark → cream → mint → light."""
+        if self.theme_state == 0:
+            self.set_dark_theme()
+        elif self.theme_state == 1:
+            self.set_cream_theme()
+        elif self.theme_state == 2:
+            self.set_mint_theme()
+        else:
+            self.set_light_theme()
+
+    #Font selection
+    def change_font(self):
+        """
+        Open a font selection dialog and apply the selected font to the editor.
+        """
+        font, ok = QFontDialog.getFont()
+        if ok:
+            self.text.setFont(font)
+
+    #File modification tracking
+    def _on_modified(self):
+        """Mark the document as modified whenever text changes."""
+        self.is_dirty = True
+
+    #File handling methods
     def open_file(self):
         """
-        Open a text file using a file dialog and load its contents into the editor.
-
-        Allows user to choose a file via a dialog. If a file is selected,
-        reads its content and places it into the text widget, replacing any
-        existing text. Also updates the window title to show the file path.
+        Open a text file using a file dialog and load its content into the editor.
+        Sets the window title and clears the dirty flag.
         """
-        file_path = filedialog.askopenfilename(
-            title="Open file",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-        )
+        file_path, _ = QFileDialog.getOpenFileName(self, "Open file", "", "Text files (*.txt);;All files (*)")
         if not file_path:
             return
-
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
-
-        self.text.delete("1.0", tk.END)
-        self.text.insert("1.0", content)
+        self.text.setPlainText(content)
         self.current_file_path = file_path
-        self.root.title(f"Text editor - {file_path}")
+        self.setWindowTitle(f"Text editor - {file_path}")
         self.is_dirty = False
-
-
-    def _on_modified(self, event=None):
-        self.is_dirty = True
-        try:
-            self.text.edit_modified(False)
-        except Exception:
-            pass
-
 
     def save_file(self):
         """
-        Save the current text to a file.
-
-        Opens a 'Save As'
-        dialog to let the user choose a location and file name. After saving,
-        updates the window title and confirms success with a message box.
+        Save the current file. If no file is set, open a Save As dialog.
+        Shows a message box confirming save and resets dirty flag.
         """
         if not self.current_file_path:
             return self.saveas_file()
-
-        content = self.text.get("1.0", tk.END)
+        content = self.text.toPlainText()
         with open(self.current_file_path, "w", encoding="utf-8") as f:
             f.write(content)
-
-        messagebox.showinfo("Saved", f"File saved:\n{self.current_file_path}")
+        QMessageBox.information(self, "Saved", f"File saved:\n{self.current_file_path}")
         self.is_dirty = False
-        self.root.title(f"Text editor - {self.current_file_path}")
+        self.setWindowTitle(f"Text editor - {self.current_file_path}")
 
     def saveas_file(self):
         """
-        Open a 'Save As' dialog to allow the user to choose a location and name
-        for saving the current text content to a new file.
-
-        If the selected path does not exist (e.g. user enters a non-existing folder),
-        an error message is shown and the saving process is aborted.
-
-        When a valid path is selected, the content of the text editor is written
-        to the chosen file, updates the window title, and displays a confirmation message.
-
-        Returns:
-            None
+        Open a Save As dialog and save the editor content to the selected path.
+        Verifies that the directory exists and shows an error if not.
         """
-        file_path = filedialog.asksaveasfilename(
-            title="Save file",
-            defaultextension=".txt",
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
-        )
-        if not file_path:  # użytkownik kliknął Anuluj
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save file", "", "Text files (*.txt);;All files (*)")
+        if not file_path:
             return
-
         dir_name = os.path.dirname(file_path)
         if dir_name and not os.path.exists(dir_name):
-            messagebox.showerror("Error", "Path does not exist!")
+            QMessageBox.critical(self, "Error", "Path does not exist!")
             return
-
         self.current_file_path = file_path
-        content = self.text.get("1.0", tk.END)
+        content = self.text.toPlainText()
         with open(self.current_file_path, "w", encoding="utf-8") as f:
             f.write(content)
-
-        messagebox.showinfo("Saved", f"File saved as:\n{self.current_file_path}")
+        QMessageBox.information(self, "Saved", f"File saved as:\n{self.current_file_path}")
         self.is_dirty = False
-        self.root.title(f"Text editor - {self.current_file_path}")
+        self.setWindowTitle(f"Text editor - {self.current_file_path}")
 
-    #TEST
+    # utility methods
     def insert_test_text(self):
-        """
-        Insert sample text at the end of the document.
-
-        Useful for demonstration or testing collaboration features.
-        Automatically scrolls to the bottom of the editor after insertion.
-        """
-        self.text.insert("end", "Hello world!")
-        self.text.see("end")
+        """Insert sample text at the end of the editor."""
+        self.text.append("Hello world!")
 
     def share_file(self):
+        """
+        Placeholder for file sharing logic.
+        In the base editor, this method does nothing.
+        """
         pass
-
-
