@@ -68,7 +68,7 @@ class ConcurrentTextEditor(QWidget):
         # Initialize network/user
         self.user = User(port_listen_=5005, port_send_=5010)
         self.client_id = str(uuid.uuid4())[:8]
-        self.user_name = self.client_id
+        self.user_name = socket.gethostname()
         self.peers = {}
         self.crdt_counter = 0
         self.applying_remote = False
