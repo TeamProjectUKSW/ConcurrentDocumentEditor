@@ -91,6 +91,7 @@ class ConcurrentTextEditor(QWidget):
         self._add_toolbar_button(toolbar_layout, "Save", self.save_file)
         self._add_toolbar_button(toolbar_layout, "Save as", self.saveas_file)
         self._add_toolbar_button(toolbar_layout, "Share", self.share_file)
+        self._add_toolbar_button(toolbar_layout, "Disconnect", self.leave_session)
         self._add_toolbar_button(toolbar_layout, "Add test", self.insert_test_text)
         self._add_toolbar_button(toolbar_layout, "Change font", self.change_font)
         self._add_toolbar_button(toolbar_layout, "Toggle theme", self.toggle_theme)
@@ -347,6 +348,9 @@ class ConcurrentTextEditor(QWidget):
         elif msg_type == "PEER_ANNOUNCE":
             self._handle_peer_announce(msg)
 
+        elif msg_type == "PEER_LEAVE":
+            self._handle_peer_leave(msg)
+
         elif msg_type == "CRDT_INSERT":
             self._apply_remote_insert(msg)
 
@@ -354,6 +358,34 @@ class ConcurrentTextEditor(QWidget):
             self._apply_remote_delete(msg)
         elif msg_type == "SNAPSHOT":
             self._apply_snapshot(msg)
+
+    def leave_session(self):
+        """Leave the current session, disconnect from peers, and continue offline."""
+        if not self.peers:
+            QMessageBox.information(self, "Disconnect", "Nie jesteś połączony z żadną sesją.")
+            return
+
+        # Notify peers that I'm leaving
+        msg = {
+            "type": "PEER_LEAVE",
+            "from_id": self.client_id
+        }
+        self._send_to_peers(msg)
+        
+        # Clear local peers list
+        self.peers.clear()
+        
+        QMessageBox.information(self, "Disconnect", "Rozłączono z sesji. Możesz kontynuować pracę lokalnie.")
+
+    def _handle_peer_leave(self, msg):
+        """Handle a peer leaving the session."""
+        peer_id = msg.get("from_id")
+        if peer_id in self.peers:
+            peer_name = self.peers[peer_id]["name"]
+            del self.peers[peer_id]
+            # Opcjonalnie: można to zrobić jako dyskretny status bar message zamiast popupu, 
+            # ale trzymajmy się konwencji QMessageBox na razie.
+            QMessageBox.information(self, "Info", f"{peer_name} opuścił sesję.")
 
     def _handle_peer_announce(self, msg):
         """Handle incoming peer announcement and connect to the new peer."""
