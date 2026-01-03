@@ -238,6 +238,10 @@ class ConcurrentTextEditor(QWidget):
         if msg.get("from_id") == self.client_id:
             return
 
+        # Jeśli już jesteśmy połączeni z tym nadawcą, ignorujemy zaproszenie
+        if msg.get("from_id") in self.peers:
+            return
+
         invite_id = msg.get("invite_id")
 
         if invite_id in self.seen_invites:
@@ -374,6 +378,8 @@ class ConcurrentTextEditor(QWidget):
         
         # Clear local peers list
         self.peers.clear()
+        # Reset seen invites so we can rejoin later if needed
+        self.seen_invites.clear()
         
         QMessageBox.information(self, "Disconnect", "Rozłączono z sesji. Możesz kontynuować pracę lokalnie.")
 
