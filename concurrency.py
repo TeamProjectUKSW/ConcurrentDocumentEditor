@@ -454,7 +454,50 @@ class ConcurrentTextEditor(QWidget):
             return
 
         if event.key() == Qt.Key.Key_Backspace:
-            self._broadcast_delete(index)
+            if cursor.hasSelection():
+                # Oblicz ile znaków jest zaznaczonych
+                start = cursor.selectionStart()
+                end = cursor.selectionEnd()
+                count = end - start
+                
+                # Usuwamy 'count' razy znak na pozycji 'start'
+                # (bo po każdym usunięciu tekst się przesuwa w lewo)
+                for _ in range(count):
+                     # CRDT_DELETE oczekuje indeksu znaku do usunięcia.
+                     # Lokalnie Backspace usuwa znak "przed kursorem" jeśli nie ma zaznaczenia,
+                     # lub całe zaznaczenie. 
+                     # W naszej logice _broadcast_delete(idx) usuwa znak na pozycji idx.
+                     # Musimy to zgrać z tym jak działa local delete.
+                     # 
+                     # Przy zaznaczeniu (start, end), usuwamy znaki od start do end-1.
+                     # Aby usunąć je po kolei, najprościej usuwać ciągle znak pod indeksem 'start'.
+                     # Np. tekst "ABCDE", zaznaczamy "BCD" (indeksy 1-4).
+                     # Usuwamy znak pod 1 ('B') -> zostaje "ACDE".
+                     # Znowu znak pod 1 ('C') -> zostaje "ADE".
+                     # Znowu znak pod 1 ('D') -> zostaje "AE".
+                     #
+                     # Uwaga: _broadcast_delete używa (index), a w implementacji 
+                     # _apply_remote_delete robi: cursor.setPosition(msg["index"] - 1); cursor.deleteChar()
+                     # To sugeruje, że protocol delete usuwa znak "na lewo" od podanego indeksu?
+                     # Sprawdźmy _broadcast_delete: op = { ..., "index": index }
+                     # Sprawdźmy _apply_remote_delete: cursor.setPosition(msg["index"] - 1); cursor.deleteChar()
+                     #
+                     # Jeśli wyślę index=5, to remote ustawi kursor na 4 i usunie znak po prawej (deleteChar usuwa 'Delete' style, czy 'Backspace' style?)
+                     # W Qt deleteChar() "Deletes the character under the cursor". Czyli styl Delete.
+                     # Więc cursor na 4 usuwa znak o indeksie 4 (piąty znak).
+                     #
+                     # Zatem, żeby usunąć znak o indeksie X, muszę ustawić kursor na X i dać deleteChar.
+                     # W _apply_remote_delete jest: setPosition(index - 1). 
+                     # Czyli jak wyślę index=5, on ustawi na 4 i usunie znak 4. OK.
+                     #
+                     # Wracając do zaznaczenia [start, end).
+                     # Chcemy usunąć znak na pozycji 'start'. 
+                     # Żeby remote usunął znak 'start', muszę wysłać index = start + 1.
+                     self._broadcast_delete(start + 1)
+            else:
+                # Brak zaznaczenia - Backspace usuwa znak na lewo od kursora
+                self._broadcast_delete(index)
+
         elif event.key() == Qt.Key.Key_Return:
             self._broadcast_insert(index, "\n")
         elif event.text() and (not event.modifiers() or event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
