@@ -498,6 +498,24 @@ class ConcurrentTextEditor(QWidget):
                 # Brak zaznaczenia - Backspace usuwa znak na lewo od kursora
                 self._broadcast_delete(index)
 
+        elif event.key() == Qt.Key.Key_Delete:
+            if cursor.hasSelection():
+                # Delete przy zaznaczeniu działa tak samo jak Backspace - usuwa zakres
+                start = cursor.selectionStart()
+                end = cursor.selectionEnd()
+                count = end - start
+                for _ in range(count):
+                     # Usuwamy ciągle znak na początku zaznaczenia
+                     self._broadcast_delete(start + 1)
+            else:
+                # Delete usuwa znak po prawej stronie kursora (na pozycji 'index')
+                # Żeby remote usunął znak 'index', musi ustawić kursor na 'index'.
+                # _apply_remote_delete robi setPosition(msg["index"] - 1).
+                # Więc msg["index"] musi wynosić index + 1.
+                # Sprawdzamy też czy nie jesteśmy na końcu tekstu
+                if index < len(self.text.toPlainText()):
+                    self._broadcast_delete(index + 1)
+
         elif event.key() == Qt.Key.Key_Return:
             self._broadcast_insert(index, "\n")
         elif event.text() and (not event.modifiers() or event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
