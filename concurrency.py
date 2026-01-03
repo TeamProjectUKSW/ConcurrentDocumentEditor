@@ -292,16 +292,39 @@ class ConcurrentTextEditor(QWidget):
     def _handle_invite_accept(self, msg, addr):
         peer_ip = addr[0]
         peer_port = msg["listen_port"]
+        new_peer_id = msg["from_id"]
+        new_peer_name = msg["from_name"]
 
-        self._add_peer(msg["from_id"], peer_ip, peer_port, msg["from_name"])
+        # Notify existing peers about the new peer AND notify the new peer about existing peers
+        for existing_id, existing_peer in self.peers.items():
+            # Tell existing peer about the new guy
+            self._send_peer_announce(
+                target_ip=existing_peer["ip"],
+                target_port=existing_peer["port"],
+                peer_id=new_peer_id,
+                peer_name=new_peer_name,
+                peer_ip=peer_ip,
+                peer_port=peer_port
+            )
+            # Tell the new guy about the existing peer
+            self._send_peer_announce(
+                target_ip=peer_ip,
+                target_port=peer_port,
+                peer_id=existing_id,
+                peer_name=existing_peer["name"],
+                peer_ip=existing_peer["ip"],
+                peer_port=existing_peer["port"]
+            )
+
+        self._add_peer(new_peer_id, peer_ip, peer_port, new_peer_name)
 
         QMessageBox.information(
             self,
             "Share",
-            f"{msg['from_name']} dołączył do sesji."
+            f"{new_peer_name} dołączył do sesji."
         )
 
-        self._send_snapshot_to_peer(msg["from_id"])
+        self._send_snapshot_to_peer(new_peer_id)
 
     def _handle_message(self, msg, addr):
 
@@ -320,6 +343,9 @@ class ConcurrentTextEditor(QWidget):
         elif msg_type == "INVITE_ACCEPT":
             self._handle_invite_accept(msg, addr)
 
+        elif msg_type == "PEER_ANNOUNCE":
+            self._handle_peer_announce(msg)
+
         elif msg_type == "CRDT_INSERT":
             self._apply_remote_insert(msg)
 
@@ -327,6 +353,29 @@ class ConcurrentTextEditor(QWidget):
             self._apply_remote_delete(msg)
         elif msg_type == "SNAPSHOT":
             self._apply_snapshot(msg)
+
+    def _handle_peer_announce(self, msg):
+        """Handle incoming peer announcement and connect to the new peer."""
+        p_id = msg["peer_id"]
+        if p_id == self.client_id:
+            return
+        if p_id in self.peers:
+            return  # Already known
+
+        self._add_peer(p_id, msg["peer_ip"], msg["peer_port"], msg["peer_name"])
+
+    def _send_peer_announce(self, target_ip, target_port, peer_id, peer_name, peer_ip, peer_port):
+        """Send a PEER_ANNOUNCE message to a specific target."""
+        msg = {
+            "type": "PEER_ANNOUNCE",
+            "peer_id": peer_id,
+            "peer_name": peer_name,
+            "peer_ip": peer_ip,
+            "peer_port": peer_port
+        }
+        payload = json.dumps(msg).encode("utf-8")
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(payload, (target_ip, target_port))
 
     def _add_peer(self, peer_id, ip, port, name):
         self.peers[peer_id] = {
