@@ -7,7 +7,8 @@ import os
 import netifaces
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QPushButton, QFileDialog, QMessageBox, QFontDialog
+    QPushButton, QFileDialog, QMessageBox, QFontDialog,
+    QApplication
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtCore import pyqtSignal
@@ -438,14 +439,29 @@ class ConcurrentTextEditor(QWidget):
         """Handle key events for broadcasting CRDT inserts/deletes (Qt version)."""
         if self.applying_remote:
             return
+        
         cursor = self.text.textCursor()
         index = cursor.position()
+
+        # Obsługa wklejania (Ctrl+V)
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() == Qt.Key.Key_V:
+            clipboard = QApplication.clipboard()
+            text = clipboard.text()
+            if text:
+                self._broadcast_insert(index, text)
+            # Pozwól domyślnej obsłudze wkleić tekst lokalnie
+            QTextEdit.keyPressEvent(self.text, event)
+            return
+
         if event.key() == Qt.Key.Key_Backspace:
             self._broadcast_delete(index)
         elif event.key() == Qt.Key.Key_Return:
             self._broadcast_insert(index, "\n")
-        elif event.text():
-            self._broadcast_insert(index, event.text())
+        elif event.text() and (not event.modifiers() or event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
+            # Wysyłaj tylko drukowalne znaki, ignoruj skróty sterujące
+            if event.text() >= ' ':
+                self._broadcast_insert(index, event.text())
+        
         QTextEdit.keyPressEvent(self.text, event)
 
     # --- CRDT broadcast helpers ---
