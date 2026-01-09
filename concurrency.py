@@ -464,6 +464,8 @@ class ConcurrentTextEditor(QWidget):
 
     def share_file(self):
         """Broadcast an INVITE message to peers on the local network."""
+        # Sync CRDT with GUI before sharing so peers get correct state
+        self._ensure_crdt_synced()
         self.invite_id = str(uuid.uuid4())
         msg = {
             "type": "INVITE",
@@ -555,6 +557,10 @@ class ConcurrentTextEditor(QWidget):
                 node_id = self.next_op_id()
                 self.crdt.apply_insert(after_id, node_id, ch)
                 after_id = node_id
+            # If we have peers, send them the new state
+            if self.peers:
+                for peer_id in list(self.peers.keys()):
+                    self._send_snapshot_to_peer(peer_id)
 
     def _broadcast_insert(self, index, text):
         """Broadcast CRDT insert operations for each character."""
