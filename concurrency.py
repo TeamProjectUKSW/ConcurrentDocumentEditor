@@ -546,7 +546,7 @@ class ConcurrentTextEditor(QWidget):
         return self.crdt.visible_id_map()
 
     def _ensure_crdt_synced(self):
-        """Ensure CRDT is synchronized with GUI text."""
+        """Ensure CRDT is synchronized with GUI text. Only call before starting a session."""
         gui_text = self.text.toPlainText()
         crdt_text = self.crdt.render()
         if gui_text != crdt_text:
@@ -557,16 +557,15 @@ class ConcurrentTextEditor(QWidget):
                 node_id = self.next_op_id()
                 self.crdt.apply_insert(after_id, node_id, ch)
                 after_id = node_id
-            # If we have peers, send them the new state
-            if self.peers:
-                for peer_id in list(self.peers.keys()):
-                    self._send_snapshot_to_peer(peer_id)
 
     def _broadcast_insert(self, index, text):
         """Broadcast CRDT insert operations for each character."""
-        self._ensure_crdt_synced()
         id_map = self._get_visible_id_map()
-        after_id = HEAD if index == 0 else id_map[index - 1]
+        # Handle case where CRDT is shorter than cursor position
+        if index > 0 and index - 1 >= len(id_map):
+            after_id = id_map[-1] if id_map else HEAD
+        else:
+            after_id = HEAD if index == 0 else id_map[index - 1]
 
         for ch in text:
             node_id = self.next_op_id()
@@ -582,7 +581,6 @@ class ConcurrentTextEditor(QWidget):
 
     def _broadcast_delete(self, index):
         """Broadcast a CRDT delete operation."""
-        self._ensure_crdt_synced()
         id_map = self._get_visible_id_map()
         if index < 1 or index > len(id_map):
             return
@@ -596,7 +594,6 @@ class ConcurrentTextEditor(QWidget):
 
     def _broadcast_delete_range(self, start, end):
         """Broadcast CRDT delete operations for a range of characters."""
-        self._ensure_crdt_synced()
         id_map = self._get_visible_id_map()
         if start < 0 or end > len(id_map):
             return
