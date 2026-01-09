@@ -74,6 +74,7 @@ class ConcurrentTextEditor(QWidget):
         self.crdt_counter = 0
         self.applying_remote = False
         self.crdt = RgaCrdt()  # Prawdziwy CRDT dla synchronizacji
+        self.pending_ops = []  # Buffer for out-of-order operations
 
         #  GUI Setup
         self.is_dirty = False
@@ -239,6 +240,8 @@ class ConcurrentTextEditor(QWidget):
                 text = msg.get("text", "")
                 self.text.setPlainText(text)
                 self.crdt = RgaCrdt()
+            # Clear pending ops - snapshot replaces everything
+            self.pending_ops.clear()
             self.is_dirty = False
         finally:
             self.applying_remote = False
@@ -621,7 +624,11 @@ class ConcurrentTextEditor(QWidget):
         char = msg["char"]
 
         if self.crdt.apply_insert(after, node_id, char):
+            self._flush_pending_ops()
             self._sync_text_from_crdt()
+        else:
+            # Buffer operation if 'after' node doesn't exist yet
+            self.pending_ops.append(("insert", after, node_id, char))
 
     def _apply_remote_delete(self, msg):
         """Apply a remote delete operation using CRDT."""
@@ -629,6 +636,33 @@ class ConcurrentTextEditor(QWidget):
 
         if self.crdt.apply_delete(node_id):
             self._sync_text_from_crdt()
+        else:
+            # Buffer operation if node doesn't exist yet
+            self.pending_ops.append(("delete", node_id))
+
+    def _flush_pending_ops(self):
+        """Try to apply buffered operations that were waiting for dependencies."""
+        if not self.pending_ops:
+            return
+
+        made_progress = True
+        while made_progress:
+            made_progress = False
+            remaining = []
+            for op in self.pending_ops:
+                if op[0] == "insert":
+                    _, after, node_id, char = op
+                    if self.crdt.apply_insert(after, node_id, char):
+                        made_progress = True
+                    else:
+                        remaining.append(op)
+                elif op[0] == "delete":
+                    _, node_id = op
+                    if self.crdt.apply_delete(node_id):
+                        made_progress = True
+                    else:
+                        remaining.append(op)
+            self.pending_ops = remaining
 
     def _sync_text_from_crdt(self):
         """Synchronize QTextEdit content with CRDT state."""
