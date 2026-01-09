@@ -458,6 +458,7 @@ class ConcurrentTextEditor(QWidget):
         self.invite_id = str(uuid.uuid4())
         msg = {
             "type": "INVITE",
+            "invite_id": self.invite_id,
             "from_id": self.client_id,
             "from_name": self.user_name,
             "listen_port": self.user.port_listen
