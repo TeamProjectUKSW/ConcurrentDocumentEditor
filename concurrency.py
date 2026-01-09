@@ -5,6 +5,7 @@ import uuid
 import time
 import os
 import netifaces
+from crdt import RgaCrdt, HEAD
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
     QPushButton, QFileDialog, QMessageBox, QFontDialog,
@@ -72,6 +73,7 @@ class ConcurrentTextEditor(QWidget):
         self.peers = {}
         self.crdt_counter = 0
         self.applying_remote = False
+        self.crdt = RgaCrdt()  # Prawdziwy CRDT dla synchronizacji
 
         #  GUI Setup
         self.is_dirty = False
@@ -228,8 +230,15 @@ class ConcurrentTextEditor(QWidget):
     def _apply_snapshot(self, msg):
         self.applying_remote = True
         try:
-            text = msg.get("text", "")
-            self.text.setPlainText(text)
+            crdt_state = msg.get("crdt_state")
+            if crdt_state:
+                self.crdt = RgaCrdt.from_dict(crdt_state)
+                self.text.setPlainText(self.crdt.render())
+            else:
+                # Fallback for old-style snapshots (just text)
+                text = msg.get("text", "")
+                self.text.setPlainText(text)
+                self.crdt = RgaCrdt()
             self.is_dirty = False
         finally:
             self.applying_remote = False
@@ -494,58 +503,18 @@ class ConcurrentTextEditor(QWidget):
 
         if event.key() == Qt.Key.Key_Backspace:
             if cursor.hasSelection():
-                # Oblicz ile znaków jest zaznaczonych
                 start = cursor.selectionStart()
                 end = cursor.selectionEnd()
-                count = end - start
-                
-                # Usuwamy 'count' razy znak na pozycji 'start'
-                # (bo po każdym usunięciu tekst się przesuwa w lewo)
-                for _ in range(count):
-                     # CRDT_DELETE oczekuje indeksu znaku do usunięcia.
-                     # Lokalnie Backspace usuwa znak "przed kursorem" jeśli nie ma zaznaczenia,
-                     # lub całe zaznaczenie. 
-                     # W naszej logice _broadcast_delete(idx) usuwa znak na pozycji idx.
-                     # Musimy to zgrać z tym jak działa local delete.
-                     # 
-                     # Przy zaznaczeniu (start, end), usuwamy znaki od start do end-1.
-                     # Aby usunąć je po kolei, najprościej usuwać ciągle znak pod indeksem 'start'.
-                     # Np. tekst "ABCDE", zaznaczamy "BCD" (indeksy 1-4).
-                     # Usuwamy znak pod 1 ('B') -> zostaje "ACDE".
-                     # Znowu znak pod 1 ('C') -> zostaje "ADE".
-                     # Znowu znak pod 1 ('D') -> zostaje "AE".
-                     #
-                     # Uwaga: _broadcast_delete używa (index), a w implementacji 
-                     # _apply_remote_delete robi: cursor.setPosition(msg["index"] - 1); cursor.deleteChar()
-                     # To sugeruje, że protocol delete usuwa znak "na lewo" od podanego indeksu?
-                     # Sprawdźmy _broadcast_delete: op = { ..., "index": index }
-                     # Sprawdźmy _apply_remote_delete: cursor.setPosition(msg["index"] - 1); cursor.deleteChar()
-                     #
-                     # Jeśli wyślę index=5, to remote ustawi kursor na 4 i usunie znak po prawej (deleteChar usuwa 'Delete' style, czy 'Backspace' style?)
-                     # W Qt deleteChar() "Deletes the character under the cursor". Czyli styl Delete.
-                     # Więc cursor na 4 usuwa znak o indeksie 4 (piąty znak).
-                     #
-                     # Zatem, żeby usunąć znak o indeksie X, muszę ustawić kursor na X i dać deleteChar.
-                     # W _apply_remote_delete jest: setPosition(index - 1). 
-                     # Czyli jak wyślę index=5, on ustawi na 4 i usunie znak 4. OK.
-                     #
-                     # Wracając do zaznaczenia [start, end).
-                     # Chcemy usunąć znak na pozycji 'start'. 
-                     # Żeby remote usunął znak 'start', muszę wysłać index = start + 1.
-                     self._broadcast_delete(start + 1)
+                self._broadcast_delete_range(start, end)
             else:
                 # Brak zaznaczenia - Backspace usuwa znak na lewo od kursora
                 self._broadcast_delete(index)
 
         elif event.key() == Qt.Key.Key_Delete:
             if cursor.hasSelection():
-                # Delete przy zaznaczeniu działa tak samo jak Backspace - usuwa zakres
                 start = cursor.selectionStart()
                 end = cursor.selectionEnd()
-                count = end - start
-                for _ in range(count):
-                     # Usuwamy ciągle znak na początku zaznaczenia
-                     self._broadcast_delete(start + 1)
+                self._broadcast_delete_range(start, end)
             else:
                 # Delete usuwa znak po prawej stronie kursora (na pozycji 'index')
                 # Żeby remote usunął znak 'index', musi ustawić kursor na 'index'.
@@ -568,17 +537,56 @@ class ConcurrentTextEditor(QWidget):
     def next_op_id(self):
         """Generate a new CRDT operation ID as a tuple (counter, client_id)."""
         self.crdt_counter += 1
-        return (self.crdt_counter, self.client_id)
+        return (self.client_id, self.crdt_counter)
 
-    def _broadcast_insert(self, index, char):
-        """Broadcast a CRDT insert operation to all connected peers."""
-        op = {"type": "CRDT_INSERT", "id": self.next_op_id(), "index": index, "char": char}
-        self._send_to_peers(op)
+    def _get_visible_id_map(self):
+        """Get mapping of cursor positions to CRDT node IDs."""
+        return self.crdt.visible_id_map()
+
+    def _broadcast_insert(self, index, text):
+        """Broadcast CRDT insert operations for each character."""
+        id_map = self._get_visible_id_map()
+        after_id = HEAD if index == 0 else id_map[index - 1]
+
+        for ch in text:
+            node_id = self.next_op_id()
+            self.crdt.apply_insert(after_id, node_id, ch)
+            op = {
+                "type": "CRDT_INSERT",
+                "after": list(after_id) if isinstance(after_id, tuple) else after_id,
+                "node_id": list(node_id),
+                "char": ch
+            }
+            self._send_to_peers(op)
+            after_id = node_id
 
     def _broadcast_delete(self, index):
-        """Broadcast a CRDT delete operation to all connected peers."""
-        op = {"type": "CRDT_DELETE", "id": self.next_op_id(), "index": index}
+        """Broadcast a CRDT delete operation."""
+        id_map = self._get_visible_id_map()
+        if index < 1 or index > len(id_map):
+            return
+        node_id = id_map[index - 1]
+        self.crdt.apply_delete(node_id)
+        op = {
+            "type": "CRDT_DELETE",
+            "node_id": list(node_id) if isinstance(node_id, tuple) else node_id
+        }
         self._send_to_peers(op)
+
+    def _broadcast_delete_range(self, start, end):
+        """Broadcast CRDT delete operations for a range of characters."""
+        id_map = self._get_visible_id_map()
+        if start < 0 or end > len(id_map):
+            return
+        # Collect all node IDs first (before any deletions)
+        node_ids = [id_map[i] for i in range(start, end)]
+        for node_id in node_ids:
+            self.crdt.apply_delete(node_id)
+            op = {
+                "type": "CRDT_DELETE",
+                "node_id": list(node_id) if isinstance(node_id, tuple) else node_id
+            }
+            self._send_to_peers(op)
 
     def _send_to_peers(self, msg):
         """Send a JSON message via UDP to all connected peers."""
@@ -588,22 +596,35 @@ class ConcurrentTextEditor(QWidget):
                 sock.sendto(payload, (peer["ip"], peer["port"]))
 
     def _apply_remote_insert(self, msg):
-        """Apply a remote insert operation locally without rebroadcasting."""
-        self.applying_remote = True
-        try:
-            cursor = self.text.textCursor()
-            cursor.setPosition(msg["index"])
-            cursor.insertText(msg["char"])
-        finally:
-            self.applying_remote = False
+        """Apply a remote insert operation using CRDT."""
+        after = tuple(msg["after"]) if isinstance(msg["after"], list) else msg["after"]
+        node_id = tuple(msg["node_id"])
+        char = msg["char"]
+
+        if self.crdt.apply_insert(after, node_id, char):
+            self._sync_text_from_crdt()
 
     def _apply_remote_delete(self, msg):
-        """Apply a remote delete operation locally without rebroadcasting."""
+        """Apply a remote delete operation using CRDT."""
+        node_id = tuple(msg["node_id"])
+
+        if self.crdt.apply_delete(node_id):
+            self._sync_text_from_crdt()
+
+    def _sync_text_from_crdt(self):
+        """Synchronize QTextEdit content with CRDT state."""
         self.applying_remote = True
         try:
             cursor = self.text.textCursor()
-            cursor.setPosition(msg["index"] - 1)
-            cursor.deleteChar()
+            old_pos = cursor.position()
+            new_text = self.crdt.render()
+            current_text = self.text.toPlainText()
+
+            if new_text != current_text:
+                self.text.setPlainText(new_text)
+                cursor = self.text.textCursor()
+                cursor.setPosition(min(old_pos, len(new_text)))
+                self.text.setTextCursor(cursor)
         finally:
             self.applying_remote = False
 
@@ -612,13 +633,11 @@ class ConcurrentTextEditor(QWidget):
         if not peer:
             return
 
-        current_text = self.text.toPlainText()
-
         msg = {
             "type": "SNAPSHOT",
             "from_id": self.client_id,
             "from_name": self.user_name,
-            "text": current_text
+            "crdt_state": self.crdt.to_dict()
         }
 
         payload = json.dumps(msg).encode("utf-8")

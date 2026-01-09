@@ -78,3 +78,41 @@ class RgaCrdt:
             for _ in n.text:
                 mapping.append(n.id)
         return mapping
+
+    def to_dict(self) -> dict:
+        """Serialize CRDT state to a JSON-compatible dict."""
+        nodes_list = []
+        for node in self.nodes.values():
+            nodes_list.append({
+                "id": list(node.id),
+                "after": list(node.after),
+                "text": node.text,
+                "deleted": node.deleted
+            })
+        return {"nodes": nodes_list}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RgaCrdt":
+        """Deserialize CRDT state from a dict."""
+        crdt = cls()
+        crdt.nodes = {}
+        crdt.children = {}
+
+        for node_data in data.get("nodes", []):
+            node_id = tuple(node_data["id"])
+            after_id = tuple(node_data["after"])
+            node = Node(
+                id=node_id,
+                after=after_id,
+                text=node_data["text"],
+                deleted=node_data["deleted"]
+            )
+            crdt.nodes[node_id] = node
+            crdt.children.setdefault(after_id, []).append(node_id)
+            crdt.children.setdefault(node_id, [])
+
+        # Sort children for deterministic ordering
+        for children_list in crdt.children.values():
+            children_list.sort()
+
+        return crdt
