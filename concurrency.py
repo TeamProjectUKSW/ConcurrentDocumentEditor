@@ -543,8 +543,22 @@ class ConcurrentTextEditor(QWidget):
         """Get mapping of cursor positions to CRDT node IDs."""
         return self.crdt.visible_id_map()
 
+    def _ensure_crdt_synced(self):
+        """Ensure CRDT is synchronized with GUI text."""
+        gui_text = self.text.toPlainText()
+        crdt_text = self.crdt.render()
+        if gui_text != crdt_text:
+            # Rebuild CRDT from GUI text
+            self.crdt = RgaCrdt()
+            after_id = HEAD
+            for ch in gui_text:
+                node_id = self.next_op_id()
+                self.crdt.apply_insert(after_id, node_id, ch)
+                after_id = node_id
+
     def _broadcast_insert(self, index, text):
         """Broadcast CRDT insert operations for each character."""
+        self._ensure_crdt_synced()
         id_map = self._get_visible_id_map()
         after_id = HEAD if index == 0 else id_map[index - 1]
 
@@ -562,6 +576,7 @@ class ConcurrentTextEditor(QWidget):
 
     def _broadcast_delete(self, index):
         """Broadcast a CRDT delete operation."""
+        self._ensure_crdt_synced()
         id_map = self._get_visible_id_map()
         if index < 1 or index > len(id_map):
             return
@@ -575,6 +590,7 @@ class ConcurrentTextEditor(QWidget):
 
     def _broadcast_delete_range(self, start, end):
         """Broadcast CRDT delete operations for a range of characters."""
+        self._ensure_crdt_synced()
         id_map = self._get_visible_id_map()
         if start < 0 or end > len(id_map):
             return
