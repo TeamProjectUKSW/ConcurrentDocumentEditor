@@ -108,7 +108,9 @@ class RgaCrdt:
                 deleted=node_data["deleted"]
             )
             crdt.nodes[node_id] = node
-            crdt.children.setdefault(after_id, []).append(node_id)
+            # Don't add self-referencing nodes to children (HEAD points to itself)
+            if node_id != after_id:
+                crdt.children.setdefault(after_id, []).append(node_id)
             crdt.children.setdefault(node_id, [])
 
         # Sort children for deterministic ordering
