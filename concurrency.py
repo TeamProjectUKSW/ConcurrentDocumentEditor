@@ -234,10 +234,13 @@ class ConcurrentTextEditor(QWidget):
             crdt_state = msg.get("crdt_state")
             if crdt_state:
                 self.crdt = RgaCrdt.from_dict(crdt_state)
-                self.text.setPlainText(self.crdt.render())
+                rendered = self.crdt.render()
+                print(f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes, text='{rendered[:50]}...'")
+                self.text.setPlainText(rendered)
             else:
                 # Fallback for old-style snapshots (just text)
                 text = msg.get("text", "")
+                print(f"[CRDT] SNAPSHOT RECEIVED (old style): text='{text[:50]}...'")
                 self.text.setPlainText(text)
                 self.crdt = RgaCrdt()
             # Clear pending ops - snapshot replaces everything
@@ -573,6 +576,7 @@ class ConcurrentTextEditor(QWidget):
         for ch in text:
             node_id = self.next_op_id()
             self.crdt.apply_insert(after_id, node_id, ch)
+            print(f"[CRDT] LOCAL INSERT: '{ch}' node={node_id} after={after_id}")
             op = {
                 "type": "CRDT_INSERT",
                 "after": list(after_id) if isinstance(after_id, tuple) else after_id,
@@ -624,10 +628,12 @@ class ConcurrentTextEditor(QWidget):
         char = msg["char"]
 
         if self.crdt.apply_insert(after, node_id, char):
+            print(f"[CRDT] INSERT OK: '{char}' node={node_id} after={after}")
             self._flush_pending_ops()
             self._sync_text_from_crdt()
         else:
             # Buffer operation if 'after' node doesn't exist yet
+            print(f"[CRDT] INSERT PENDING: '{char}' node={node_id} after={after} (after not found)")
             self.pending_ops.append(("insert", after, node_id, char))
 
     def _apply_remote_delete(self, msg):
@@ -635,9 +641,11 @@ class ConcurrentTextEditor(QWidget):
         node_id = tuple(msg["node_id"])
 
         if self.crdt.apply_delete(node_id):
+            print(f"[CRDT] DELETE OK: node={node_id}")
             self._sync_text_from_crdt()
         else:
             # Buffer operation if node doesn't exist yet
+            print(f"[CRDT] DELETE PENDING: node={node_id} (not found)")
             self.pending_ops.append(("delete", node_id))
 
     def _flush_pending_ops(self):
@@ -645,6 +653,7 @@ class ConcurrentTextEditor(QWidget):
         if not self.pending_ops:
             return
 
+        print(f"[CRDT] Flushing {len(self.pending_ops)} pending ops...")
         made_progress = True
         while made_progress:
             made_progress = False
@@ -653,16 +662,20 @@ class ConcurrentTextEditor(QWidget):
                 if op[0] == "insert":
                     _, after, node_id, char = op
                     if self.crdt.apply_insert(after, node_id, char):
+                        print(f"[CRDT] FLUSH INSERT OK: '{char}' node={node_id}")
                         made_progress = True
                     else:
                         remaining.append(op)
                 elif op[0] == "delete":
                     _, node_id = op
                     if self.crdt.apply_delete(node_id):
+                        print(f"[CRDT] FLUSH DELETE OK: node={node_id}")
                         made_progress = True
                     else:
                         remaining.append(op)
             self.pending_ops = remaining
+        if self.pending_ops:
+            print(f"[CRDT] Still {len(self.pending_ops)} pending ops remaining")
 
     def _sync_text_from_crdt(self):
         """Synchronize QTextEdit content with CRDT state."""
@@ -674,6 +687,7 @@ class ConcurrentTextEditor(QWidget):
             current_text = self.text.toPlainText()
 
             if new_text != current_text:
+                print(f"[CRDT] SYNC: '{current_text}' -> '{new_text}'")
                 self.text.setPlainText(new_text)
                 cursor = self.text.textCursor()
                 cursor.setPosition(min(old_pos, len(new_text)))
@@ -686,11 +700,14 @@ class ConcurrentTextEditor(QWidget):
         if not peer:
             return
 
+        crdt_dict = self.crdt.to_dict()
+        print(f"[CRDT] SNAPSHOT SEND to {peer['name']}: {len(crdt_dict.get('nodes', []))} nodes")
+
         msg = {
             "type": "SNAPSHOT",
             "from_id": self.client_id,
             "from_name": self.user_name,
-            "crdt_state": self.crdt.to_dict()
+            "crdt_state": crdt_dict
         }
 
         payload = json.dumps(msg).encode("utf-8")
