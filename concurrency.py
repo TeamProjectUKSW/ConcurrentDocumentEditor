@@ -75,6 +75,7 @@ class ConcurrentTextEditor(QWidget):
         self.applying_remote = False
         self.crdt = RgaCrdt()  # Prawdziwy CRDT dla synchronizacji
         self.pending_ops = []  # Buffer for out-of-order operations
+        self.cursor_node = HEAD  # Track cursor position as CRDT node ID
 
         #  GUI Setup
         self.is_dirty = False
@@ -108,6 +109,13 @@ class ConcurrentTextEditor(QWidget):
 
         # Connect key events for CRDT
         self.text.keyPressEvent = self._on_key
+        # Update cursor_node when user clicks or navigates
+        self.text.cursorPositionChanged.connect(self._on_cursor_changed)
+
+    def _on_cursor_changed(self):
+        """Update cursor_node when cursor position changes (click, navigation)."""
+        if not self.applying_remote:
+            self._update_cursor_node_from_position()
 
 
     #  GUI helper
@@ -495,7 +503,10 @@ class ConcurrentTextEditor(QWidget):
         """Handle key events for broadcasting CRDT inserts/deletes (Qt version)."""
         if self.applying_remote:
             return
-        
+
+        # Update cursor_node from current GUI position before any operation
+        self._update_cursor_node_from_position()
+
         cursor = self.text.textCursor()
         index = cursor.position()
 
@@ -505,8 +516,8 @@ class ConcurrentTextEditor(QWidget):
             text = clipboard.text()
             if text:
                 self._broadcast_insert(index, text)
-            # Pozwól domyślnej obsłudze wkleić tekst lokalnie
-            QTextEdit.keyPressEvent(self.text, event)
+                self._sync_text_from_crdt()
+                self._move_cursor(self._get_cursor_position_from_node())
             return
 
         if event.key() == Qt.Key.Key_Backspace:
@@ -515,14 +526,14 @@ class ConcurrentTextEditor(QWidget):
                 end = cursor.selectionEnd()
                 self._broadcast_delete_range(start, end)
                 self._sync_text_from_crdt()
-                self._move_cursor(start)
+                self._move_cursor(self._get_cursor_position_from_node())
                 return
             else:
                 # Brak zaznaczenia - Backspace usuwa znak na lewo od kursora
                 if index > 0:
                     self._broadcast_delete(index)
                     self._sync_text_from_crdt()
-                    self._move_cursor(index - 1)
+                    self._move_cursor(self._get_cursor_position_from_node())
                 return
 
         elif event.key() == Qt.Key.Key_Delete:
@@ -531,30 +542,32 @@ class ConcurrentTextEditor(QWidget):
                 end = cursor.selectionEnd()
                 self._broadcast_delete_range(start, end)
                 self._sync_text_from_crdt()
-                self._move_cursor(start)
+                self._move_cursor(self._get_cursor_position_from_node())
                 return
             else:
                 # Delete usuwa znak po prawej stronie kursora (na pozycji 'index')
                 if index < len(self.text.toPlainText()):
                     self._broadcast_delete(index + 1)
                     self._sync_text_from_crdt()
-                    self._move_cursor(index)
+                    self._move_cursor(self._get_cursor_position_from_node())
                 return
 
         elif event.key() == Qt.Key.Key_Return:
             self._broadcast_insert(index, "\n")
             self._sync_text_from_crdt()
-            self._move_cursor(index + 1)
+            self._move_cursor(self._get_cursor_position_from_node())
             return  # Don't let Qt handle it
         elif event.text() and (not event.modifiers() or event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
             # Wysyłaj tylko drukowalne znaki, ignoruj skróty sterujące
             if event.text() >= ' ':
                 self._broadcast_insert(index, event.text())
                 self._sync_text_from_crdt()
-                self._move_cursor(index + len(event.text()))
+                self._move_cursor(self._get_cursor_position_from_node())
                 return  # Don't let Qt handle it - CRDT is source of truth
 
+        # For navigation keys (arrows, etc.), let Qt handle and then update cursor_node
         QTextEdit.keyPressEvent(self.text, event)
+        self._update_cursor_node_from_position()
 
     # --- CRDT broadcast helpers ---
     def next_op_id(self):
@@ -579,14 +592,35 @@ class ConcurrentTextEditor(QWidget):
                 self.crdt.apply_insert(after_id, node_id, ch)
                 after_id = node_id
 
+    def _update_cursor_node_from_position(self):
+        """Update cursor_node based on current GUI cursor position."""
+        cursor = self.text.textCursor()
+        pos = cursor.position()
+        id_map = self._get_visible_id_map()
+        if pos == 0:
+            self.cursor_node = HEAD
+        elif pos <= len(id_map):
+            self.cursor_node = id_map[pos - 1]
+        elif id_map:
+            self.cursor_node = id_map[-1]
+        else:
+            self.cursor_node = HEAD
+
+    def _get_cursor_position_from_node(self):
+        """Get GUI position from cursor_node."""
+        if self.cursor_node == HEAD:
+            return 0
+        id_map = self._get_visible_id_map()
+        for i, node_id in enumerate(id_map):
+            if node_id == self.cursor_node:
+                return i + 1
+        # Node not found (deleted?), return end
+        return len(id_map)
+
     def _broadcast_insert(self, index, text):
         """Broadcast CRDT insert operations for each character."""
-        id_map = self._get_visible_id_map()
-        # Handle case where CRDT is shorter than cursor position
-        if index > 0 and index - 1 >= len(id_map):
-            after_id = id_map[-1] if id_map else HEAD
-        else:
-            after_id = HEAD if index == 0 else id_map[index - 1]
+        # Use cursor_node instead of GUI position
+        after_id = self.cursor_node
 
         for ch in text:
             node_id = self.next_op_id()
@@ -601,12 +635,17 @@ class ConcurrentTextEditor(QWidget):
             self._send_to_peers(op)
             after_id = node_id
 
+        # Update cursor to last inserted node
+        self.cursor_node = after_id
+
     def _broadcast_delete(self, index):
         """Broadcast a CRDT delete operation."""
         id_map = self._get_visible_id_map()
         if index < 1 or index > len(id_map):
             return
         node_id = id_map[index - 1]
+        # Update cursor to node before the deleted one
+        self.cursor_node = id_map[index - 2] if index >= 2 else HEAD
         self.crdt.apply_delete(node_id)
         op = {
             "type": "CRDT_DELETE",
@@ -619,6 +658,8 @@ class ConcurrentTextEditor(QWidget):
         id_map = self._get_visible_id_map()
         if start < 0 or end > len(id_map):
             return
+        # Update cursor to node before the deleted range
+        self.cursor_node = id_map[start - 1] if start >= 1 else HEAD
         # Collect all node IDs first (before any deletions)
         node_ids = [id_map[i] for i in range(start, end)]
         for node_id in node_ids:
