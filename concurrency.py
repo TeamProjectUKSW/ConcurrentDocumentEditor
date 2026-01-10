@@ -514,31 +514,46 @@ class ConcurrentTextEditor(QWidget):
                 start = cursor.selectionStart()
                 end = cursor.selectionEnd()
                 self._broadcast_delete_range(start, end)
+                self._sync_text_from_crdt()
+                self._move_cursor(start)
+                return
             else:
                 # Brak zaznaczenia - Backspace usuwa znak na lewo od kursora
-                self._broadcast_delete(index)
+                if index > 0:
+                    self._broadcast_delete(index)
+                    self._sync_text_from_crdt()
+                    self._move_cursor(index - 1)
+                return
 
         elif event.key() == Qt.Key.Key_Delete:
             if cursor.hasSelection():
                 start = cursor.selectionStart()
                 end = cursor.selectionEnd()
                 self._broadcast_delete_range(start, end)
+                self._sync_text_from_crdt()
+                self._move_cursor(start)
+                return
             else:
                 # Delete usuwa znak po prawej stronie kursora (na pozycji 'index')
-                # Żeby remote usunął znak 'index', musi ustawić kursor na 'index'.
-                # _apply_remote_delete robi setPosition(msg["index"] - 1).
-                # Więc msg["index"] musi wynosić index + 1.
-                # Sprawdzamy też czy nie jesteśmy na końcu tekstu
                 if index < len(self.text.toPlainText()):
                     self._broadcast_delete(index + 1)
+                    self._sync_text_from_crdt()
+                    self._move_cursor(index)
+                return
 
         elif event.key() == Qt.Key.Key_Return:
             self._broadcast_insert(index, "\n")
+            self._sync_text_from_crdt()
+            self._move_cursor(index + 1)
+            return  # Don't let Qt handle it
         elif event.text() and (not event.modifiers() or event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
             # Wysyłaj tylko drukowalne znaki, ignoruj skróty sterujące
             if event.text() >= ' ':
                 self._broadcast_insert(index, event.text())
-        
+                self._sync_text_from_crdt()
+                self._move_cursor(index + len(event.text()))
+                return  # Don't let Qt handle it - CRDT is source of truth
+
         QTextEdit.keyPressEvent(self.text, event)
 
     # --- CRDT broadcast helpers ---
@@ -694,6 +709,12 @@ class ConcurrentTextEditor(QWidget):
                 self.text.setTextCursor(cursor)
         finally:
             self.applying_remote = False
+
+    def _move_cursor(self, position):
+        """Move cursor to specified position."""
+        cursor = self.text.textCursor()
+        cursor.setPosition(min(position, len(self.text.toPlainText())))
+        self.text.setTextCursor(cursor)
 
     def _send_snapshot_to_peer(self, peer_id):
         peer = self.peers.get(peer_id)
