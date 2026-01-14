@@ -698,11 +698,33 @@ class ConcurrentTextEditor(QWidget):
         if self.cursor_node == HEAD:
             return 0
         id_map = self._get_visible_id_map()
+        
+        # Try to find the exact node
         for i, node_id in enumerate(id_map):
             if node_id == self.cursor_node:
                 return i + 1
-        # Node not found (deleted?), return end
-        return len(id_map)
+        
+        # Node not found (deleted). Fallback to nearest visible ancestor.
+        # Walk up the 'after' chain until we find a visible node or HEAD.
+        current_id = self.cursor_node
+        while current_id != HEAD:
+            if current_id not in self.crdt.nodes:
+                # Should not happen if data is consistent, but safety first
+                current_id = HEAD
+                break
+            
+            node = self.crdt.nodes[current_id]
+            if not node.deleted:
+                # Found a visible ancestor. Find its position in the map.
+                for i, visible_id in enumerate(id_map):
+                    if visible_id == current_id:
+                        return i + 1
+                # If marked not deleted but not in id_map? Odd, keep searching.
+            
+            current_id = node.after
+
+        # If we reached HEAD (or fell through), cursor goes to start
+        return 0
 
     def _broadcast_insert(self, index, text):
         """Broadcast CRDT insert operations for each character."""
