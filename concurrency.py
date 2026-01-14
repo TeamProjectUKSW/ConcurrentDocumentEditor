@@ -672,14 +672,10 @@ class ConcurrentTextEditor(QWidget):
             return  # Don't let Qt handle it
         
         elif event.text():
-            # Allow text input if it's printable and not a system shortcut (Ctrl/Cmd)
-            # This allows AltGr (Polish chars) which often registers as AltModifier or GroupSwitchModifier
-            modifiers = event.modifiers()
-            is_control_shortcut = (modifiers & Qt.KeyboardModifier.ControlModifier) or \
-                                  (modifiers & Qt.KeyboardModifier.MetaModifier)
-            
-            # Check if printable char (>= space) and not a control shortcut
-            if event.text() >= ' ' and not is_control_shortcut:
+            # Simply check if it's a printable character (>= space).
+            # We trust Qt: if it produced text, it's text.
+            # This fixes Windows AltGr (Ctrl+Alt) being blocked.
+            if event.text() >= ' ':
                 self._broadcast_insert(index, event.text())
                 self._sync_text_from_crdt()
                 self._move_cursor(self._get_cursor_position_from_node())
