@@ -79,6 +79,10 @@ class RgaCrdt:
                 mapping.append(n.id)
         return mapping
 
+    def state_hash(self) -> int:
+        """Compute a hash of the visible text state."""
+        return hash(self.render())
+
     def to_dict(self) -> dict:
         """Serialize CRDT state to a JSON-compatible dict."""
         nodes_list = []

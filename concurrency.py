@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QMessageBox, QFontDialog,
     QApplication
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import pyqtSignal
 
 def get_all_local_ips():
@@ -106,6 +106,11 @@ class ConcurrentTextEditor(QWidget):
 
         # Start listening thread
         self.get_shared_file()
+
+        # Anti-Entropy / Consistency Check Timer
+        self.consistency_timer = QTimer(self)
+        self.consistency_timer.timeout.connect(self._broadcast_state_check)
+        self.consistency_timer.start(3000)  # Check every 3 seconds
 
         # Connect key events for CRDT
         self.text.keyPressEvent = self._on_key
@@ -386,6 +391,12 @@ class ConcurrentTextEditor(QWidget):
         elif msg_type == "SNAPSHOT":
             self._apply_snapshot(msg)
 
+        elif msg_type == "STATE_CHECK":
+            self._handle_state_check(msg, addr)
+
+        elif msg_type == "REQUEST_SNAPSHOT":
+            self._send_snapshot_to_peer(msg.get("from_id"))
+
     def leave_session(self):
         """Leave the current session, disconnect from peers, and continue offline."""
         if not self.peers:
@@ -447,6 +458,74 @@ class ConcurrentTextEditor(QWidget):
             "last_seen": time.time()
         }
         print(f"[PEER] Dodano {name} ({ip}:{port})")
+
+    # --- Anti-Entropy Logic ---
+    def _broadcast_state_check(self):
+        """Periodically broadcast current state hash to detect desynchronization."""
+        if not self.peers:
+            return
+
+        current_hash = self.crdt.state_hash()
+        node_count = len(self.crdt.nodes)
+
+        msg = {
+            "type": "STATE_CHECK",
+            "from_id": self.client_id,
+            "state_hash": current_hash,
+            "node_count": node_count
+        }
+        self._send_to_peers(msg)
+
+    def _handle_state_check(self, msg, addr):
+        """Handle incoming state check. If divergent, request or send snapshot."""
+        remote_hash = msg.get("state_hash")
+        remote_count = msg.get("node_count", 0)
+        sender_id = msg.get("from_id")
+
+        if sender_id not in self.peers:
+            return
+
+        my_hash = self.crdt.state_hash()
+        my_count = len(self.crdt.nodes)
+
+        if remote_hash == my_hash:
+            return  # States are consistent
+
+        print(f"[SYNC] Inconsistency detected with {sender_id}. Me: {my_count} nodes, Them: {remote_count} nodes.")
+
+        # Simple resolution strategy:
+        # If I have more data (nodes), I assume I am 'ahead' and send a snapshot.
+        # If they have more data, I ask for a snapshot.
+        # If equal nodes but different hash (rare collision/divergence), tie-break by client_id.
+
+        if my_count > remote_count:
+            print(f"[SYNC] Sending snapshot to {sender_id} (I have more data).")
+            self._send_snapshot_to_peer(sender_id)
+        elif my_count < remote_count:
+            print(f"[SYNC] Requesting snapshot from {sender_id} (They have more data).")
+            self._request_snapshot(sender_id)
+        else:
+            # Equal node count but different content. Tie-breaker.
+            if self.client_id > sender_id:
+                print(f"[SYNC] Tie-break: Sending snapshot to {sender_id}.")
+                self._send_snapshot_to_peer(sender_id)
+            else:
+                # I'll wait for them to send (or request explicitly if impatient)
+                pass
+
+    def _request_snapshot(self, peer_id):
+        """Send a request for a snapshot to a specific peer."""
+        peer = self.peers.get(peer_id)
+        if not peer:
+            return
+        
+        msg = {
+            "type": "REQUEST_SNAPSHOT",
+            "from_id": self.client_id
+        }
+        payload = json.dumps(msg).encode("utf-8")
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.sendto(payload, (peer["ip"], peer["port"]))
 
     # --- CRDT/Networking logic ---
     def get_shared_file(self):
