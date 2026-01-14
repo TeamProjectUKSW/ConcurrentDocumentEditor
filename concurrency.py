@@ -6,6 +6,7 @@ import time
 import os
 import netifaces
 import gzip
+import base64
 from crdt import RgaCrdt, HEAD
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
@@ -77,6 +78,7 @@ class ConcurrentTextEditor(QWidget):
         self.crdt = RgaCrdt()  # Prawdziwy CRDT dla synchronizacji
         self.pending_ops = []  # Buffer for out-of-order operations
         self.cursor_node = HEAD  # Track cursor position as CRDT node ID
+        self.chunk_buffer = {}   # Buffer for reassembling fragmented UDP packets
 
         #  GUI Setup
         self.is_dirty = False
@@ -390,11 +392,15 @@ class ConcurrentTextEditor(QWidget):
         if msg.get("from_id") == self.client_id:
             return
 
-        print(
-            f"[RECV] from={addr} type={msg.get('type')} from_id={msg.get('from_id')} from_name={msg.get('from_name')}")
-        print(f"[ME]   my_id={self.client_id} my_name={self.user_name}")
+        # print(
+        #     f"[RECV] from={addr} type={msg.get('type')} from_id={msg.get('from_id')} from_name={msg.get('from_name')}")
+        # print(f"[ME]   my_id={self.client_id} my_name={self.user_name}")
 
         msg_type = msg.get("type")
+
+        if msg_type == "CHUNK":
+            self._handle_chunk(msg, addr)
+            return
 
         if msg_type == "INVITE":
             self._handle_invite(msg, addr)
@@ -421,6 +427,49 @@ class ConcurrentTextEditor(QWidget):
 
         elif msg_type == "REQUEST_SNAPSHOT":
             self._send_snapshot_to_peer(msg.get("from_id"))
+
+    def _handle_chunk(self, msg, addr):
+        """Reassemble chunked messages."""
+        msg_id = msg.get("id")
+        chunk_idx = msg.get("i")
+        total_chunks = msg.get("n")
+        data_b64 = msg.get("data")
+
+        if not (msg_id and total_chunks and data_b64 is not None):
+            return
+
+        if msg_id not in self.chunk_buffer:
+            self.chunk_buffer[msg_id] = [None] * total_chunks
+        
+        try:
+            chunk_data = base64.b64decode(data_b64)
+            self.chunk_buffer[msg_id][chunk_idx] = chunk_data
+        except Exception as e:
+            print(f"[CHUNK] Error decoding chunk: {e}")
+            return
+
+        # Check if complete
+        if all(c is not None for c in self.chunk_buffer[msg_id]):
+            # Reassemble
+            full_data = b"".join(self.chunk_buffer[msg_id])
+            del self.chunk_buffer[msg_id]
+            
+            # Try to decompress and parse
+            try:
+                # Assuming snapshots are always gzipped in my implementation
+                try:
+                    decompressed = gzip.decompress(full_data)
+                    full_data = decompressed
+                except (gzip.BadGzipFile, OSError):
+                    pass # Not gzipped or raw
+
+                full_msg = json.loads(full_data.decode("utf-8"))
+                print(f"[CHUNK] Reassembled message {msg_id} ({len(full_data)} bytes)")
+                
+                # Recursive handle
+                self._handle_message(full_msg, addr)
+            except Exception as e:
+                print(f"[CHUNK] Error processing reassembled message: {e}")
 
     def leave_session(self):
         """Leave the current session, disconnect from peers, and continue offline."""
@@ -921,11 +970,46 @@ class ConcurrentTextEditor(QWidget):
         }
 
         payload = json.dumps(msg).encode("utf-8")
-        # Compress payload to avoid Message too long error
+        # Compress payload
         payload = gzip.compress(payload)
 
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.sendto(payload, (peer["ip"], peer["port"]))
+        self._send_udp_payload(payload, peer["ip"], peer["port"])
+
+    def _send_udp_payload(self, payload, ip, port):
+        """Send data via UDP, fragmenting if necessary."""
+        MAX_SIZE = 32000 # Safe under 64KB OS limit
+        
+        if len(payload) <= MAX_SIZE:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.sendto(payload, (ip, port))
+        else:
+            # Fragment
+            msg_id = str(uuid.uuid4())
+            total_chunks = (len(payload) + MAX_SIZE - 1) // MAX_SIZE
+            
+            print(f"[CHUNK] Splitting {len(payload)} bytes into {total_chunks} chunks for {ip}")
+            
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                for i in range(total_chunks):
+                    chunk = payload[i*MAX_SIZE : (i+1)*MAX_SIZE]
+                    chunk_b64 = base64.b64encode(chunk).decode('ascii')
+                    
+                    packet = {
+                        "type": "CHUNK",
+                        "id": msg_id,
+                        "i": i,
+                        "n": total_chunks,
+                        "data": chunk_b64,
+                        "from_id": self.client_id # Routing help
+                    }
+                    
+                    packet_bytes = json.dumps(packet).encode("utf-8")
+                    try:
+                        sock.sendto(packet_bytes, (ip, port))
+                        # Small delay to prevent packet flooding/drop on receiver
+                        time.sleep(0.002) 
+                    except OSError as e:
+                        print(f"[CHUNK] Send error: {e}")
 
     def _prompt_unsaved_before_join(self):
         msg = QMessageBox(self)
