@@ -1,8 +1,15 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QPushButton, QFileDialog, QMessageBox, QFontDialog
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QTextEdit,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QFontDialog,
 )
 import os
+
 
 class BaseTextEditor(QWidget):
     """
@@ -18,6 +25,7 @@ class BaseTextEditor(QWidget):
         text (QTextEdit): Main text editing widget.
         theme_state (int): Current theme state (0=light, 1=dark, 2=cream, 3=mint).
     """
+
     def __init__(self):
         """Initialize the text editor, GUI components, and default theme."""
         super().__init__()
@@ -26,19 +34,16 @@ class BaseTextEditor(QWidget):
         self.current_file_path = None
         self.is_dirty = False
 
-        # Layout setup
         main_layout = QVBoxLayout()
         toolbar_layout = QHBoxLayout()
         main_layout.addLayout(toolbar_layout)
         self.setLayout(main_layout)
 
-        # QTextEdit setup
         self.text = QTextEdit()
-        self.text.setAcceptRichText(False)  # plain text only
+        self.text.setAcceptRichText(False)
         self.text.textChanged.connect(self._on_modified)
         main_layout.addWidget(self.text)
 
-        # Toolbar buttons
         btn_open = QPushButton("Open")
         btn_open.clicked.connect(self.open_file)
         toolbar_layout.addWidget(btn_open)
@@ -67,11 +72,9 @@ class BaseTextEditor(QWidget):
         btn_theme.clicked.connect(self.toggle_theme)
         toolbar_layout.addWidget(btn_theme)
 
-        # --- Default theme ---
-        self.theme_state = 0  # 0=light, 1=dark, 2=cream, 3=mint
+        self.theme_state = 0
         self.set_light_theme()
 
-    # Theme methods
     def set_light_theme(self):
         """Set a light, high-contrast theme for the editor."""
         self.setStyleSheet("""
@@ -123,7 +126,6 @@ class BaseTextEditor(QWidget):
         else:
             self.set_light_theme()
 
-    #Font selection
     def change_font(self):
         """
         Open a font selection dialog and apply the selected font to the editor.
@@ -132,18 +134,18 @@ class BaseTextEditor(QWidget):
         if ok:
             self.text.setFont(font)
 
-    #File modification tracking
     def _on_modified(self):
         """Mark the document as modified whenever text changes."""
         self.is_dirty = True
 
-    #File handling methods
     def open_file(self):
         """
         Open a text file using a file dialog and load its content into the editor.
         Sets the window title and clears the dirty flag.
         """
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open file", "", "Text files (*.txt);;All files (*)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open file", "", "Text files (*.txt);;All files (*)"
+        )
         if not file_path:
             return
         with open(file_path, "r", encoding="utf-8") as f:
@@ -172,7 +174,9 @@ class BaseTextEditor(QWidget):
         Open a Save As dialog and save the editor content to the selected path.
         Verifies that the directory exists and shows an error if not.
         """
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save file", "", "Text files (*.txt);;All files (*)")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save file", "", "Text files (*.txt);;All files (*)"
+        )
         if not file_path:
             return
         dir_name = os.path.dirname(file_path)
@@ -183,11 +187,12 @@ class BaseTextEditor(QWidget):
         content = self.text.toPlainText()
         with open(self.current_file_path, "w", encoding="utf-8") as f:
             f.write(content)
-        QMessageBox.information(self, "Saved", f"File saved as:\n{self.current_file_path}")
+        QMessageBox.information(
+            self, "Saved", f"File saved as:\n{self.current_file_path}"
+        )
         self.is_dirty = False
         self.setWindowTitle(f"Text editor - {self.current_file_path}")
 
-    # utility methods
     def insert_test_text(self):
         """Insert sample text at the end of the editor."""
         self.text.append("Hello world!")

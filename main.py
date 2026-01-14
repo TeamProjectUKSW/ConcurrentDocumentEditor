@@ -4,10 +4,10 @@ import sys
 
 
 def main():
-    app = QApplication(sys.argv)  # Tworzymy QApplication raz
+    app = QApplication(sys.argv)
     editor = ConcurrentTextEditor()
     editor.show()
-    sys.exit(app.exec())  # uruchamiamy event loop
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

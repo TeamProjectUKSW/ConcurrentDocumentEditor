@@ -9,12 +9,19 @@ import gzip
 import base64
 from crdt import RgaCrdt, HEAD
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
-    QPushButton, QFileDialog, QMessageBox, QFontDialog,
-    QApplication
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QTextEdit,
+    QPushButton,
+    QFileDialog,
+    QMessageBox,
+    QFontDialog,
+    QApplication,
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import pyqtSignal
+
 
 def get_all_local_ips():
     """
@@ -30,8 +37,8 @@ def get_all_local_ips():
         for iface in netifaces.interfaces():
             addrs = netifaces.ifaddresses(iface).get(netifaces.AF_INET, [])
             for addr in addrs:
-                ip = addr.get('addr')
-                broadcast = addr.get('broadcast')
+                ip = addr.get("addr")
+                broadcast = addr.get("broadcast")
                 if ip and ip != "127.0.0.1" and not ip.startswith("169.254."):
                     ips[ip] = broadcast
         if not ips:
@@ -58,7 +65,9 @@ class ConcurrentTextEditor(QWidget):
         theme_state (int): Tracks current theme 0 = light, 1 = dark, 2 = cream 3 = mint.
         text (QTextEdit): Main text editing widget.
     """
+
     message_received = pyqtSignal(dict, tuple)
+
     def __init__(self):
         """Initialize the editor, GUI, network, and CRDT event handling."""
         super().__init__()
@@ -68,32 +77,28 @@ class ConcurrentTextEditor(QWidget):
         self.setWindowTitle("Concurrent Text Editor")
         self.resize(800, 600)
 
-        # Initialize network/user
         self.user = User(port_listen_=5005, port_send_=5010)
         self.client_id = str(uuid.uuid4())[:8]
         self.user_name = socket.gethostname()
         self.peers = {}
         self.crdt_counter = 0
         self.applying_remote = False
-        self.crdt = RgaCrdt()  # Prawdziwy CRDT dla synchronizacji
-        self.pending_ops = []  # Buffer for out-of-order operations
-        self.cursor_node = HEAD  # Track cursor position as CRDT node ID
-        self.chunk_buffer = {}   # Buffer for reassembling fragmented UDP packets
+        self.crdt = RgaCrdt()
+        self.pending_ops = []
+        self.cursor_node = HEAD
+        self.chunk_buffer = {}
 
-        #  GUI Setup
         self.is_dirty = False
         main_layout = QVBoxLayout()
         toolbar_layout = QHBoxLayout()
         main_layout.addLayout(toolbar_layout)
         self.setLayout(main_layout)
 
-        # QTextEdit
         self.text = QTextEdit()
         self.text.setAcceptRichText(False)
         self.text.textChanged.connect(self._on_modified)
         main_layout.addWidget(self.text)
 
-        #  Toolbar buttons
         self._add_toolbar_button(toolbar_layout, "Open", self.open_file)
         self._add_toolbar_button(toolbar_layout, "Save", self.save_file)
         self._add_toolbar_button(toolbar_layout, "Save as", self.saveas_file)
@@ -103,21 +108,17 @@ class ConcurrentTextEditor(QWidget):
         self._add_toolbar_button(toolbar_layout, "Change font", self.change_font)
         self._add_toolbar_button(toolbar_layout, "Toggle theme", self.toggle_theme)
 
-        # -Default theme
-        self.theme_state = 0  # 0=light, 1=dark, 2=navy
+        self.theme_state = 0
         self.set_light_theme()
 
-        # Start listening thread
         self.get_shared_file()
 
-        # Anti-Entropy / Consistency Check Timer
         self.consistency_timer = QTimer(self)
         self.consistency_timer.timeout.connect(self._broadcast_state_check)
-        self.consistency_timer.start(3000)  # Check every 3 seconds
+        self.consistency_timer.start(3000)
 
-        # Connect key events for CRDT
         self.text.keyPressEvent = self._on_key
-        # Update cursor_node when user clicks or navigates
+
         self.text.cursorPositionChanged.connect(self._on_cursor_changed)
 
     def _on_cursor_changed(self):
@@ -125,8 +126,6 @@ class ConcurrentTextEditor(QWidget):
         if not self.applying_remote:
             self._update_cursor_node_from_position()
 
-
-    #  GUI helper
     def _add_toolbar_button(self, layout, text, callback):
         """
         Add a QPushButton to the toolbar with a given label and callback.
@@ -140,7 +139,6 @@ class ConcurrentTextEditor(QWidget):
         btn.clicked.connect(callback)
         layout.addWidget(btn)
 
-    #  Theme methods
     def set_light_theme(self):
         """Set a light theme for the editor."""
         self.setStyleSheet("""
@@ -169,7 +167,7 @@ class ConcurrentTextEditor(QWidget):
             QPushButton { background-color: #f0e6d2; color: #2e2e2e; border-radius: 6px; padding: 6px 12px; }
             QPushButton:hover { background-color: #e6dabe; }
         """)
-        self.theme_state = 2  # przypisujemy nowy stan
+        self.theme_state = 2
 
     def set_mint_theme(self):
         """Set a soft mint theme for a fresh look."""
@@ -192,21 +190,21 @@ class ConcurrentTextEditor(QWidget):
         else:
             self.set_light_theme()
 
-    # - Font selection
     def change_font(self):
         """Open a font selection dialog and apply the chosen font to the editor."""
         font, ok = QFontDialog.getFont()
         if ok:
             self.text.setFont(font)
 
-    # --- File/Editor logic ---
     def _on_modified(self):
         """Mark document as modified when text changes."""
         self.is_dirty = True
 
     def open_file(self):
         """Open a text file and load its contents into the editor."""
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open file", "", "Text files (*.txt);;All files (*)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open file", "", "Text files (*.txt);;All files (*)"
+        )
         if not file_path:
             return
         with open(file_path, "r", encoding="utf-8") as f:
@@ -227,7 +225,9 @@ class ConcurrentTextEditor(QWidget):
 
     def saveas_file(self):
         """Open Save As dialog and save editor content to a chosen path."""
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save file", "", "Text files (*.txt);;All files (*)")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save file", "", "Text files (*.txt);;All files (*)"
+        )
         if not file_path:
             return
         dir_name = os.path.dirname(file_path)
@@ -249,73 +249,70 @@ class ConcurrentTextEditor(QWidget):
         try:
             crdt_state = msg.get("crdt_state")
             if crdt_state:
-                # Keep old CRDT to resolve cursor ancestors if needed
                 old_crdt = self.crdt
                 new_crdt = RgaCrdt.from_dict(crdt_state)
-                
+
                 self.crdt = new_crdt
                 rendered = self.crdt.render()
-                print(f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes")
-                
-                # Update Lamport Clock based on snapshot data
+                print(
+                    f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes"
+                )
+
                 max_counter = self.crdt_counter
                 for node in self.crdt.nodes.keys():
-                    if isinstance(node, tuple) and len(node) == 2 and isinstance(node[0], int):
+                    if (
+                        isinstance(node, tuple)
+                        and len(node) == 2
+                        and isinstance(node[0], int)
+                    ):
                         if node[0] > max_counter:
                             max_counter = node[0]
                 self._update_lamport_clock(max_counter)
-                
+
                 self.text.setPlainText(rendered)
-                
-                # Clear pending ops - snapshot replaces everything
+
                 self.pending_ops.clear()
                 self.is_dirty = False
 
-                # Validate cursor_node against new CRDT state
                 if self.cursor_node != HEAD and self.cursor_node not in self.crdt.nodes:
-                    print(f"[SYNC] Cursor node {self.cursor_node} missing in snapshot, searching for ancestor in old graph.")
-                    
-                    # Walk up ancestors using OLD CRDT structure
+                    print(
+                        f"[SYNC] Cursor node {self.cursor_node} missing in snapshot, searching for ancestor in old graph."
+                    )
+
                     current_id = self.cursor_node
                     found_ancestor = HEAD
-                    
-                    # Safety limit to avoid infinite loops if graph is broken
+
                     for _ in range(1000):
                         if current_id == HEAD:
                             break
-                        
-                        # Look up in old_crdt
+
                         if current_id not in old_crdt.nodes:
-                            # Should not happen if cursor was valid, but if so, abort
                             break
-                            
+
                         node = old_crdt.nodes[current_id]
                         parent_id = node.after
-                        
-                        # Check if parent exists in NEW CRDT
+
                         if parent_id in self.crdt.nodes:
                             found_ancestor = parent_id
                             break
-                        
+
                         current_id = parent_id
-                    
+
                     self.cursor_node = found_ancestor
 
-                # Restore cursor based on node ID (sticky)
                 new_pos = self._get_cursor_position_from_node()
                 cursor = self.text.textCursor()
                 cursor.setPosition(min(new_pos, len(self.text.toPlainText())))
                 self.text.setTextCursor(cursor)
 
             else:
-                # Fallback for old-style snapshots (just text)
                 text = msg.get("text", "")
                 print(f"[CRDT] SNAPSHOT RECEIVED (old style): text='{text[:50]}...'")
                 self.text.setPlainText(text)
                 self.crdt = RgaCrdt()
                 self.pending_ops.clear()
                 self.is_dirty = False
-                # Just reset cursor for legacy snapshots
+
                 self.cursor_node = HEAD
 
         finally:
@@ -325,7 +322,6 @@ class ConcurrentTextEditor(QWidget):
         if msg.get("from_id") == self.client_id:
             return
 
-        # Jeśli już jesteśmy połączeni z tym nadawcą, ignorujemy zaproszenie
         if msg.get("from_id") in self.peers:
             return
 
@@ -334,7 +330,6 @@ class ConcurrentTextEditor(QWidget):
         if invite_id in self.seen_invites:
             return
 
-        # ✅ zapamiętaj że już obsłużone
         self.seen_invites.add(invite_id)
 
         def ask():
@@ -342,7 +337,7 @@ class ConcurrentTextEditor(QWidget):
                 self,
                 "Share request",
                 f"{msg.get('from_name', 'Inny użytkownik')} chce współdzielić dokument.\nAkceptujesz?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
 
             if reply != QMessageBox.StandardButton.Yes:
@@ -362,17 +357,14 @@ class ConcurrentTextEditor(QWidget):
             peer_port = msg["listen_port"]
 
             self._add_peer(
-                msg["from_id"],
-                peer_ip,
-                peer_port,
-                msg.get("from_name", peer_ip)
+                msg["from_id"], peer_ip, peer_port, msg.get("from_name", peer_ip)
             )
 
             response = {
                 "type": "INVITE_ACCEPT",
                 "from_id": self.client_id,
                 "from_name": self.user_name,
-                "listen_port": self.user.port_listen
+                "listen_port": self.user.port_listen,
             }
 
             payload = json.dumps(response).encode("utf-8")
@@ -380,6 +372,7 @@ class ConcurrentTextEditor(QWidget):
                 sock.sendto(payload, (peer_ip, peer_port))
 
         from PyQt6.QtCore import QTimer
+
         QTimer.singleShot(0, ask)
 
     def _handle_invite_accept(self, msg, addr):
@@ -388,45 +381,34 @@ class ConcurrentTextEditor(QWidget):
         new_peer_id = msg["from_id"]
         new_peer_name = msg["from_name"]
 
-        # Notify existing peers about the new peer AND notify the new peer about existing peers
         for existing_id, existing_peer in self.peers.items():
-            # Tell existing peer about the new guy
             self._send_peer_announce(
                 target_ip=existing_peer["ip"],
                 target_port=existing_peer["port"],
                 peer_id=new_peer_id,
                 peer_name=new_peer_name,
                 peer_ip=peer_ip,
-                peer_port=peer_port
+                peer_port=peer_port,
             )
-            # Tell the new guy about the existing peer
+
             self._send_peer_announce(
                 target_ip=peer_ip,
                 target_port=peer_port,
                 peer_id=existing_id,
                 peer_name=existing_peer["name"],
                 peer_ip=existing_peer["ip"],
-                peer_port=existing_peer["port"]
+                peer_port=existing_peer["port"],
             )
 
         self._add_peer(new_peer_id, peer_ip, peer_port, new_peer_name)
 
-        QMessageBox.information(
-            self,
-            "Share",
-            f"{new_peer_name} dołączył do sesji."
-        )
+        QMessageBox.information(self, "Share", f"{new_peer_name} dołączył do sesji.")
 
         self._send_snapshot_to_peer(new_peer_id)
 
     def _handle_message(self, msg, addr):
-
         if msg.get("from_id") == self.client_id:
             return
-
-        # print(
-        #     f"[RECV] from={addr} type={msg.get('type')} from_id={msg.get('from_id')} from_name={msg.get('from_name')}")
-        # print(f"[ME]   my_id={self.client_id} my_name={self.user_name}")
 
         msg_type = msg.get("type")
 
@@ -472,7 +454,7 @@ class ConcurrentTextEditor(QWidget):
 
         if msg_id not in self.chunk_buffer:
             self.chunk_buffer[msg_id] = [None] * total_chunks
-        
+
         try:
             chunk_data = base64.b64decode(data_b64)
             self.chunk_buffer[msg_id][chunk_idx] = chunk_data
@@ -480,25 +462,20 @@ class ConcurrentTextEditor(QWidget):
             print(f"[CHUNK] Error decoding chunk: {e}")
             return
 
-        # Check if complete
         if all(c is not None for c in self.chunk_buffer[msg_id]):
-            # Reassemble
             full_data = b"".join(self.chunk_buffer[msg_id])
             del self.chunk_buffer[msg_id]
-            
-            # Try to decompress and parse
+
             try:
-                # Assuming snapshots are always gzipped in my implementation
                 try:
                     decompressed = gzip.decompress(full_data)
                     full_data = decompressed
                 except (gzip.BadGzipFile, OSError):
-                    pass # Not gzipped or raw
+                    pass
 
                 full_msg = json.loads(full_data.decode("utf-8"))
                 print(f"[CHUNK] Reassembled message {msg_id} ({len(full_data)} bytes)")
-                
-                # Recursive handle
+
                 self._handle_message(full_msg, addr)
             except Exception as e:
                 print(f"[CHUNK] Error processing reassembled message: {e}")
@@ -506,22 +483,21 @@ class ConcurrentTextEditor(QWidget):
     def leave_session(self):
         """Leave the current session, disconnect from peers, and continue offline."""
         if not self.peers:
-            QMessageBox.information(self, "Disconnect", "Nie jesteś połączony z żadną sesją.")
+            QMessageBox.information(
+                self, "Disconnect", "Nie jesteś połączony z żadną sesją."
+            )
             return
 
-        # Notify peers that I'm leaving
-        msg = {
-            "type": "PEER_LEAVE",
-            "from_id": self.client_id
-        }
+        msg = {"type": "PEER_LEAVE", "from_id": self.client_id}
         self._send_to_peers(msg)
-        
-        # Clear local peers list
+
         self.peers.clear()
-        # Reset seen invites so we can rejoin later if needed
+
         self.seen_invites.clear()
-        
-        QMessageBox.information(self, "Disconnect", "Rozłączono z sesji. Możesz kontynuować pracę lokalnie.")
+
+        QMessageBox.information(
+            self, "Disconnect", "Rozłączono z sesji. Możesz kontynuować pracę lokalnie."
+        )
 
     def _handle_peer_leave(self, msg):
         """Handle a peer leaving the session."""
@@ -529,8 +505,7 @@ class ConcurrentTextEditor(QWidget):
         if peer_id in self.peers:
             peer_name = self.peers[peer_id]["name"]
             del self.peers[peer_id]
-            # Opcjonalnie: można to zrobić jako dyskretny status bar message zamiast popupu, 
-            # ale trzymajmy się konwencji QMessageBox na razie.
+
             QMessageBox.information(self, "Info", f"{peer_name} opuścił sesję.")
 
     def _handle_peer_announce(self, msg):
@@ -539,18 +514,20 @@ class ConcurrentTextEditor(QWidget):
         if p_id == self.client_id:
             return
         if p_id in self.peers:
-            return  # Already known
+            return
 
         self._add_peer(p_id, msg["peer_ip"], msg["peer_port"], msg["peer_name"])
 
-    def _send_peer_announce(self, target_ip, target_port, peer_id, peer_name, peer_ip, peer_port):
+    def _send_peer_announce(
+        self, target_ip, target_port, peer_id, peer_name, peer_ip, peer_port
+    ):
         """Send a PEER_ANNOUNCE message to a specific target."""
         msg = {
             "type": "PEER_ANNOUNCE",
             "peer_id": peer_id,
             "peer_name": peer_name,
             "peer_ip": peer_ip,
-            "peer_port": peer_port
+            "peer_port": peer_port,
         }
         payload = json.dumps(msg).encode("utf-8")
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -561,11 +538,10 @@ class ConcurrentTextEditor(QWidget):
             "ip": ip,
             "port": port,
             "name": name,
-            "last_seen": time.time()
+            "last_seen": time.time(),
         }
         print(f"[PEER] Dodano {name} ({ip}:{port})")
 
-    # --- Anti-Entropy Logic ---
     def _broadcast_state_check(self):
         """Periodically broadcast current state hash to detect desynchronization."""
         if not self.peers:
@@ -578,7 +554,7 @@ class ConcurrentTextEditor(QWidget):
             "type": "STATE_CHECK",
             "from_id": self.client_id,
             "state_hash": current_hash,
-            "node_count": node_count
+            "node_count": node_count,
         }
         self._send_to_peers(msg)
 
@@ -595,14 +571,11 @@ class ConcurrentTextEditor(QWidget):
         my_count = len(self.crdt.nodes)
 
         if remote_hash == my_hash:
-            return  # States are consistent
+            return
 
-        print(f"[SYNC] Inconsistency detected with {sender_id}. Me: {my_count} nodes, Them: {remote_count} nodes.")
-
-        # Simple resolution strategy:
-        # If I have more data (nodes), I assume I am 'ahead' and send a snapshot.
-        # If they have more data, I ask for a snapshot.
-        # If equal nodes but different hash (rare collision/divergence), tie-break by client_id.
+        print(
+            f"[SYNC] Inconsistency detected with {sender_id}. Me: {my_count} nodes, Them: {remote_count} nodes."
+        )
 
         if my_count > remote_count:
             print(f"[SYNC] Sending snapshot to {sender_id} (I have more data).")
@@ -611,12 +584,10 @@ class ConcurrentTextEditor(QWidget):
             print(f"[SYNC] Requesting snapshot from {sender_id} (They have more data).")
             self._request_snapshot(sender_id)
         else:
-            # Equal node count but different content. Tie-breaker.
             if self.client_id > sender_id:
                 print(f"[SYNC] Tie-break: Sending snapshot to {sender_id}.")
                 self._send_snapshot_to_peer(sender_id)
             else:
-                # I'll wait for them to send (or request explicitly if impatient)
                 pass
 
     def _request_snapshot(self, peer_id):
@@ -624,37 +595,30 @@ class ConcurrentTextEditor(QWidget):
         peer = self.peers.get(peer_id)
         if not peer:
             return
-        
-        msg = {
-            "type": "REQUEST_SNAPSHOT",
-            "from_id": self.client_id
-        }
+
+        msg = {"type": "REQUEST_SNAPSHOT", "from_id": self.client_id}
         payload = json.dumps(msg).encode("utf-8")
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(payload, (peer["ip"], peer["port"]))
 
-    # --- CRDT/Networking logic ---
     def get_shared_file(self):
         def listen():
             self.auto_select_ip()
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.bind(('', self.user.port_listen))
+            sock.bind(("", self.user.port_listen))
             print(f"[UDP] Listening on {self.user.port_listen} ...")
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
-                    
-                    # Try to decompress, assuming it might be gzipped
+
                     try:
                         decompressed = gzip.decompress(data)
                         data = decompressed
                     except (gzip.BadGzipFile, OSError):
-                        # Not gzipped, treat as raw bytes
                         pass
 
                     msg = json.loads(data.decode("utf-8"))
 
-                    # 🔥 PRZEJŚCIE DO WĄTKU GUI
                     self.message_received.emit(msg, addr)
 
                 except Exception as e:
@@ -672,7 +636,7 @@ class ConcurrentTextEditor(QWidget):
 
     def share_file(self):
         """Broadcast an INVITE message to peers on the local network."""
-        # Sync CRDT with GUI before sharing so peers get correct state
+
         self._ensure_crdt_synced()
         self.invite_id = str(uuid.uuid4())
         msg = {
@@ -680,7 +644,7 @@ class ConcurrentTextEditor(QWidget):
             "invite_id": self.invite_id,
             "from_id": self.client_id,
             "from_name": self.user_name,
-            "listen_port": self.user.port_listen
+            "listen_port": self.user.port_listen,
         }
         payload = json.dumps(msg).encode("utf-8")
         ips = get_all_local_ips()
@@ -691,21 +655,23 @@ class ConcurrentTextEditor(QWidget):
                     sock.sendto(payload, (bcast, self.user.port_listen))
                 except Exception:
                     pass
-        QMessageBox.information(self, "Share", "Zaproszenie wysłane. Czekam na odpowiedzi.")
+        QMessageBox.information(
+            self, "Share", "Zaproszenie wysłane. Czekam na odpowiedzi."
+        )
 
     def _on_key(self, e):
         """Handle key events for broadcasting CRDT inserts/deletes (Qt version)."""
         if self.applying_remote or e is None:
             return
 
-        # Update cursor_node from current GUI position before any operation
         self._update_cursor_node_from_position()
 
         cursor = self.text.textCursor()
         index = cursor.position()
 
-        # Obsługa wklejania (Ctrl+V)
-        if (e.modifiers() & Qt.KeyboardModifier.ControlModifier) and e.key() == Qt.Key.Key_V:
+        if (
+            e.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ) and e.key() == Qt.Key.Key_V:
             clipboard = QApplication.clipboard()
             if clipboard:
                 text = clipboard.text()
@@ -724,7 +690,6 @@ class ConcurrentTextEditor(QWidget):
                 self._move_cursor(self._get_cursor_position_from_node())
                 return
             else:
-                # Brak zaznaczenia - Backspace usuwa znak na lewo od kursora
                 if index > 0:
                     self._broadcast_delete(index)
                     self._sync_text_from_crdt()
@@ -740,7 +705,6 @@ class ConcurrentTextEditor(QWidget):
                 self._move_cursor(self._get_cursor_position_from_node())
                 return
             else:
-                # Delete usuwa znak po prawej stronie kursora (na pozycji 'index')
                 if index < len(self.text.toPlainText()):
                     self._broadcast_delete(index + 1)
                     self._sync_text_from_crdt()
@@ -751,23 +715,18 @@ class ConcurrentTextEditor(QWidget):
             self._broadcast_insert(index, "\n")
             self._sync_text_from_crdt()
             self._move_cursor(self._get_cursor_position_from_node())
-            return  # Don't let Qt handle it
-        
+            return
+
         elif e.text():
-            # Simply check if it's a printable character (>= space).
-            # We trust Qt: if it produced text, it's text.
-            # This fixes Windows AltGr (Ctrl+Alt) being blocked.
-            if e.text() >= ' ':
+            if e.text() >= " ":
                 self._broadcast_insert(index, e.text())
                 self._sync_text_from_crdt()
                 self._move_cursor(self._get_cursor_position_from_node())
-                return  # Don't let Qt handle it - CRDT is source of truth
+                return
 
-        # For navigation keys (arrows, etc.), let Qt handle and then update cursor_node
         QTextEdit.keyPressEvent(self.text, e)
         self._update_cursor_node_from_position()
 
-    # --- CRDT broadcast helpers ---
     def next_op_id(self):
         """Generate a new CRDT operation ID as a tuple (counter, client_id)."""
         self.crdt_counter += 1
@@ -787,7 +746,6 @@ class ConcurrentTextEditor(QWidget):
         gui_text = self.text.toPlainText()
         crdt_text = self.crdt.render()
         if gui_text != crdt_text:
-            # Rebuild CRDT from GUI text
             self.crdt = RgaCrdt()
             after_id = HEAD
             for ch in gui_text:
@@ -814,37 +772,30 @@ class ConcurrentTextEditor(QWidget):
         if self.cursor_node == HEAD:
             return 0
         id_map = self._get_visible_id_map()
-        
-        # Try to find the exact node
+
         for i, node_id in enumerate(id_map):
             if node_id == self.cursor_node:
                 return i + 1
-        
-        # Node not found (deleted). Fallback to nearest visible ancestor.
-        # Walk up the 'after' chain until we find a visible node or HEAD.
+
         current_id = self.cursor_node
         while current_id != HEAD:
             if current_id not in self.crdt.nodes:
-                # Should not happen if data is consistent, but safety first
                 current_id = HEAD
                 break
-            
+
             node = self.crdt.nodes[current_id]
             if not node.deleted:
-                # Found a visible ancestor. Find its position in the map.
                 for i, visible_id in enumerate(id_map):
                     if visible_id == current_id:
                         return i + 1
-                # If marked not deleted but not in id_map? Odd, keep searching.
-            
+
             current_id = node.after
 
-        # If we reached HEAD (or fell through), cursor goes to start
         return 0
 
     def _broadcast_insert(self, index, text):
         """Broadcast CRDT insert operations for each character."""
-        # Use cursor_node instead of GUI position
+
         after_id = self.cursor_node
 
         for ch in text:
@@ -855,12 +806,11 @@ class ConcurrentTextEditor(QWidget):
                 "type": "CRDT_INSERT",
                 "after": list(after_id) if isinstance(after_id, tuple) else after_id,
                 "node_id": list(node_id),
-                "char": ch
+                "char": ch,
             }
             self._send_to_peers(op)
             after_id = node_id
 
-        # Update cursor to last inserted node
         self.cursor_node = after_id
 
     def _broadcast_delete(self, index):
@@ -869,12 +819,12 @@ class ConcurrentTextEditor(QWidget):
         if index < 1 or index > len(id_map):
             return
         node_id = id_map[index - 1]
-        # Update cursor to node before the deleted one
+
         self.cursor_node = id_map[index - 2] if index >= 2 else HEAD
         self.crdt.apply_delete(node_id)
         op = {
             "type": "CRDT_DELETE",
-            "node_id": list(node_id) if isinstance(node_id, tuple) else node_id
+            "node_id": list(node_id) if isinstance(node_id, tuple) else node_id,
         }
         self._send_to_peers(op)
 
@@ -883,15 +833,15 @@ class ConcurrentTextEditor(QWidget):
         id_map = self._get_visible_id_map()
         if start < 0 or end > len(id_map):
             return
-        # Update cursor to node before the deleted range
+
         self.cursor_node = id_map[start - 1] if start >= 1 else HEAD
-        # Collect all node IDs first (before any deletions)
+
         node_ids = [id_map[i] for i in range(start, end)]
         for node_id in node_ids:
             self.crdt.apply_delete(node_id)
             op = {
                 "type": "CRDT_DELETE",
-                "node_id": list(node_id) if isinstance(node_id, tuple) else node_id
+                "node_id": list(node_id) if isinstance(node_id, tuple) else node_id,
             }
             self._send_to_peers(op)
 
@@ -908,7 +858,6 @@ class ConcurrentTextEditor(QWidget):
         node_id = tuple(msg["node_id"])
         char = msg["char"]
 
-        # Update Lamport Clock
         self._update_lamport_clock(node_id[0])
 
         if self.crdt.apply_insert(after, node_id, char):
@@ -916,8 +865,9 @@ class ConcurrentTextEditor(QWidget):
             self._flush_pending_ops()
             self._sync_text_from_crdt()
         else:
-            # Buffer operation if 'after' node doesn't exist yet
-            print(f"[CRDT] INSERT PENDING: '{char}' node={node_id} after={after} (after not found)")
+            print(
+                f"[CRDT] INSERT PENDING: '{char}' node={node_id} after={after} (after not found)"
+            )
             self.pending_ops.append(("insert", after, node_id, char))
 
     def _apply_remote_delete(self, msg):
@@ -928,7 +878,6 @@ class ConcurrentTextEditor(QWidget):
             print(f"[CRDT] DELETE OK: node={node_id}")
             self._sync_text_from_crdt()
         else:
-            # Buffer operation if node doesn't exist yet
             print(f"[CRDT] DELETE PENDING: node={node_id} (not found)")
             self.pending_ops.append(("delete", node_id))
 
@@ -965,15 +914,12 @@ class ConcurrentTextEditor(QWidget):
         """Synchronize QTextEdit content with CRDT state."""
         self.applying_remote = True
         try:
-            # We don't rely on integer position anymore, but on self.cursor_node
             new_text = self.crdt.render()
             current_text = self.text.toPlainText()
 
             if new_text != current_text:
-                # print(f"[CRDT] SYNC: '{current_text}' -> '{new_text}'")
                 self.text.setPlainText(new_text)
-                
-                # Restore cursor based on cursor_node (sticky cursor)
+
                 new_pos = self._get_cursor_position_from_node()
                 cursor = self.text.textCursor()
                 cursor.setPosition(min(new_pos, len(new_text)))
@@ -993,54 +939,57 @@ class ConcurrentTextEditor(QWidget):
             return
 
         crdt_dict = self.crdt.to_dict()
-        print(f"[CRDT] SNAPSHOT SEND to {peer['name']}: {len(crdt_dict.get('nodes', []))} nodes")
+        print(
+            f"[CRDT] SNAPSHOT SEND to {peer['name']}: {len(crdt_dict.get('nodes', []))} nodes"
+        )
 
         msg = {
             "type": "SNAPSHOT",
             "from_id": self.client_id,
             "from_name": self.user_name,
-            "crdt_state": crdt_dict
+            "crdt_state": crdt_dict,
         }
 
         payload = json.dumps(msg).encode("utf-8")
-        # Compress payload
+
         payload = gzip.compress(payload)
 
         self._send_udp_payload(payload, peer["ip"], peer["port"])
 
     def _send_udp_payload(self, payload, ip, port):
         """Send data via UDP, fragmenting if necessary."""
-        MAX_SIZE = 32000 # Safe under 64KB OS limit
-        
+        MAX_SIZE = 32000
+
         if len(payload) <= MAX_SIZE:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.sendto(payload, (ip, port))
         else:
-            # Fragment
             msg_id = str(uuid.uuid4())
             total_chunks = (len(payload) + MAX_SIZE - 1) // MAX_SIZE
-            
-            print(f"[CHUNK] Splitting {len(payload)} bytes into {total_chunks} chunks for {ip}")
-            
+
+            print(
+                f"[CHUNK] Splitting {len(payload)} bytes into {total_chunks} chunks for {ip}"
+            )
+
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 for i in range(total_chunks):
-                    chunk = payload[i*MAX_SIZE : (i+1)*MAX_SIZE]
-                    chunk_b64 = base64.b64encode(chunk).decode('ascii')
-                    
+                    chunk = payload[i * MAX_SIZE : (i + 1) * MAX_SIZE]
+                    chunk_b64 = base64.b64encode(chunk).decode("ascii")
+
                     packet = {
                         "type": "CHUNK",
                         "id": msg_id,
                         "i": i,
                         "n": total_chunks,
                         "data": chunk_b64,
-                        "from_id": self.client_id # Routing help
+                        "from_id": self.client_id,
                     }
-                    
+
                     packet_bytes = json.dumps(packet).encode("utf-8")
                     try:
                         sock.sendto(packet_bytes, (ip, port))
-                        # Small delay to prevent packet flooding/drop on receiver
-                        time.sleep(0.002) 
+
+                        time.sleep(0.002)
                     except OSError as e:
                         print(f"[CHUNK] Send error: {e}")
 
@@ -1054,7 +1003,9 @@ class ConcurrentTextEditor(QWidget):
         )
 
         save_btn = msg.addButton("Zapisz zmiany", QMessageBox.ButtonRole.AcceptRole)
-        discard_btn = msg.addButton("Odrzuć zmiany", QMessageBox.ButtonRole.DestructiveRole)
+        discard_btn = msg.addButton(
+            "Odrzuć zmiany", QMessageBox.ButtonRole.DestructiveRole
+        )
         msg.addButton("Anuluj", QMessageBox.ButtonRole.RejectRole)
 
         msg.exec()
@@ -1078,7 +1029,7 @@ class User:
             port_listen_ (int): UDP port to listen for incoming messages.
             port_send_ (int): UDP port to send outgoing messages.
         """
-        self.host = ''
+        self.host = ""
         self.port_listen = port_listen_
         self.port_send = port_send_
-        self.bcast = '255.255.255.255'
+        self.bcast = "255.255.255.255"
