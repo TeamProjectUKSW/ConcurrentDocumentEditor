@@ -248,7 +248,7 @@ class ConcurrentTextEditor(QWidget):
             if crdt_state:
                 self.crdt = RgaCrdt.from_dict(crdt_state)
                 rendered = self.crdt.render()
-                print(f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes, text='{rendered[:50]}...'")
+                print(f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes")
                 self.text.setPlainText(rendered)
             else:
                 # Fallback for old-style snapshots (just text)
@@ -256,9 +256,17 @@ class ConcurrentTextEditor(QWidget):
                 print(f"[CRDT] SNAPSHOT RECEIVED (old style): text='{text[:50]}...'")
                 self.text.setPlainText(text)
                 self.crdt = RgaCrdt()
+            
             # Clear pending ops - snapshot replaces everything
             self.pending_ops.clear()
             self.is_dirty = False
+
+            # Restore cursor based on node ID (sticky)
+            new_pos = self._get_cursor_position_from_node()
+            cursor = self.text.textCursor()
+            cursor.setPosition(min(new_pos, len(self.text.toPlainText())))
+            self.text.setTextCursor(cursor)
+
         finally:
             self.applying_remote = False
 
@@ -816,16 +824,18 @@ class ConcurrentTextEditor(QWidget):
         """Synchronize QTextEdit content with CRDT state."""
         self.applying_remote = True
         try:
-            cursor = self.text.textCursor()
-            old_pos = cursor.position()
+            # We don't rely on integer position anymore, but on self.cursor_node
             new_text = self.crdt.render()
             current_text = self.text.toPlainText()
 
             if new_text != current_text:
-                print(f"[CRDT] SYNC: '{current_text}' -> '{new_text}'")
+                # print(f"[CRDT] SYNC: '{current_text}' -> '{new_text}'")
                 self.text.setPlainText(new_text)
+                
+                # Restore cursor based on cursor_node (sticky cursor)
+                new_pos = self._get_cursor_position_from_node()
                 cursor = self.text.textCursor()
-                cursor.setPosition(min(old_pos, len(new_text)))
+                cursor.setPosition(min(new_pos, len(new_text)))
                 self.text.setTextCursor(cursor)
         finally:
             self.applying_remote = False
