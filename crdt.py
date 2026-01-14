@@ -29,7 +29,7 @@ class RgaCrdt:
 
     def apply_insert(self, after: CrdtId, node_id: CrdtId, text: str) -> bool:
 
-        if after not in self.nodes:
+        if self.nodes is None or after not in self.nodes:
             return False  
 
         if node_id in self.nodes:

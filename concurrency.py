@@ -270,6 +270,13 @@ class ConcurrentTextEditor(QWidget):
             self.pending_ops.clear()
             self.is_dirty = False
 
+            # Validate cursor_node against new CRDT state
+            if self.cursor_node != HEAD and self.cursor_node not in self.crdt.nodes:
+                print(f"[SYNC] Cursor node {self.cursor_node} missing in snapshot, falling back.")
+                # Walk up ancestors if possible, or just reset to HEAD
+                # For simplicity and safety after snapshot, reset to HEAD if missing
+                self.cursor_node = HEAD
+
             # Restore cursor based on node ID (sticky)
             new_pos = self._get_cursor_position_from_node()
             cursor = self.text.textCursor()
