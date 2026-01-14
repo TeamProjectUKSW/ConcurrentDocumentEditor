@@ -1,10 +1,7 @@
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
     QPushButton, QFileDialog, QMessageBox, QFontDialog
 )
-from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt
-import sys
 import os
 
 class BaseTextEditor(QWidget):

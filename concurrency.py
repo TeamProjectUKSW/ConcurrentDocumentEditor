@@ -32,7 +32,7 @@ def get_all_local_ips():
             for addr in addrs:
                 ip = addr.get('addr')
                 broadcast = addr.get('broadcast')
-                if ip != "127.0.0.1" and not ip.startswith("169.254."):
+                if ip and ip != "127.0.0.1" and not ip.startswith("169.254."):
                     ips[ip] = broadcast
         if not ips:
             raise Exception("No multiuser work enabled, check your internet connection")
@@ -661,9 +661,9 @@ class ConcurrentTextEditor(QWidget):
                     pass
         QMessageBox.information(self, "Share", "Zaproszenie wysłane. Czekam na odpowiedzi.")
 
-    def _on_key(self, event):
+    def _on_key(self, e):
         """Handle key events for broadcasting CRDT inserts/deletes (Qt version)."""
-        if self.applying_remote:
+        if self.applying_remote or e is None:
             return
 
         # Update cursor_node from current GUI position before any operation
@@ -673,16 +673,17 @@ class ConcurrentTextEditor(QWidget):
         index = cursor.position()
 
         # Obsługa wklejania (Ctrl+V)
-        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) and event.key() == Qt.Key.Key_V:
+        if (e.modifiers() & Qt.KeyboardModifier.ControlModifier) and e.key() == Qt.Key.Key_V:
             clipboard = QApplication.clipboard()
-            text = clipboard.text()
-            if text:
-                self._broadcast_insert(index, text)
-                self._sync_text_from_crdt()
-                self._move_cursor(self._get_cursor_position_from_node())
+            if clipboard:
+                text = clipboard.text()
+                if text:
+                    self._broadcast_insert(index, text)
+                    self._sync_text_from_crdt()
+                    self._move_cursor(self._get_cursor_position_from_node())
             return
 
-        if event.key() == Qt.Key.Key_Backspace:
+        if e.key() == Qt.Key.Key_Backspace:
             if cursor.hasSelection():
                 start = cursor.selectionStart()
                 end = cursor.selectionEnd()
@@ -698,7 +699,7 @@ class ConcurrentTextEditor(QWidget):
                     self._move_cursor(self._get_cursor_position_from_node())
                 return
 
-        elif event.key() == Qt.Key.Key_Delete:
+        elif e.key() == Qt.Key.Key_Delete:
             if cursor.hasSelection():
                 start = cursor.selectionStart()
                 end = cursor.selectionEnd()
@@ -714,24 +715,24 @@ class ConcurrentTextEditor(QWidget):
                     self._move_cursor(self._get_cursor_position_from_node())
                 return
 
-        elif event.key() == Qt.Key.Key_Return:
+        elif e.key() == Qt.Key.Key_Return:
             self._broadcast_insert(index, "\n")
             self._sync_text_from_crdt()
             self._move_cursor(self._get_cursor_position_from_node())
             return  # Don't let Qt handle it
         
-        elif event.text():
+        elif e.text():
             # Simply check if it's a printable character (>= space).
             # We trust Qt: if it produced text, it's text.
             # This fixes Windows AltGr (Ctrl+Alt) being blocked.
-            if event.text() >= ' ':
-                self._broadcast_insert(index, event.text())
+            if e.text() >= ' ':
+                self._broadcast_insert(index, e.text())
                 self._sync_text_from_crdt()
                 self._move_cursor(self._get_cursor_position_from_node())
                 return  # Don't let Qt handle it - CRDT is source of truth
 
         # For navigation keys (arrows, etc.), let Qt handle and then update cursor_node
-        QTextEdit.keyPressEvent(self.text, event)
+        QTextEdit.keyPressEvent(self.text, e)
         self._update_cursor_node_from_position()
 
     # --- CRDT broadcast helpers ---
@@ -1022,7 +1023,7 @@ class ConcurrentTextEditor(QWidget):
 
         save_btn = msg.addButton("Zapisz zmiany", QMessageBox.ButtonRole.AcceptRole)
         discard_btn = msg.addButton("Odrzuć zmiany", QMessageBox.ButtonRole.DestructiveRole)
-        cancel_btn = msg.addButton("Anuluj", QMessageBox.ButtonRole.RejectRole)
+        msg.addButton("Anuluj", QMessageBox.ButtonRole.RejectRole)
 
         msg.exec()
 
