@@ -249,6 +249,15 @@ class ConcurrentTextEditor(QWidget):
                 self.crdt = RgaCrdt.from_dict(crdt_state)
                 rendered = self.crdt.render()
                 print(f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes")
+                
+                # Update Lamport Clock based on snapshot data
+                max_counter = self.crdt_counter
+                for node in self.crdt.nodes.keys():
+                    if isinstance(node, tuple) and len(node) == 2 and isinstance(node[0], int):
+                        if node[0] > max_counter:
+                            max_counter = node[0]
+                self._update_lamport_clock(max_counter)
+                
                 self.text.setPlainText(rendered)
             else:
                 # Fallback for old-style snapshots (just text)
@@ -662,6 +671,11 @@ class ConcurrentTextEditor(QWidget):
         self.crdt_counter += 1
         return (self.crdt_counter, self.client_id)
 
+    def _update_lamport_clock(self, remote_counter):
+        """Update local counter to be at least remote_counter."""
+        if remote_counter > self.crdt_counter:
+            self.crdt_counter = remote_counter
+
     def _get_visible_id_map(self):
         """Get mapping of cursor positions to CRDT node IDs."""
         return self.crdt.visible_id_map()
@@ -791,6 +805,9 @@ class ConcurrentTextEditor(QWidget):
         after = tuple(msg["after"]) if isinstance(msg["after"], list) else msg["after"]
         node_id = tuple(msg["node_id"])
         char = msg["char"]
+
+        # Update Lamport Clock
+        self._update_lamport_clock(node_id[0])
 
         if self.crdt.apply_insert(after, node_id, char):
             print(f"[CRDT] INSERT OK: '{char}' node={node_id} after={after}")
