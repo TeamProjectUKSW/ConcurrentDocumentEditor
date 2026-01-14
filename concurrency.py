@@ -5,6 +5,7 @@ import uuid
 import time
 import os
 import netifaces
+import gzip
 from crdt import RgaCrdt, HEAD
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTextEdit,
@@ -561,6 +562,15 @@ class ConcurrentTextEditor(QWidget):
             while True:
                 try:
                     data, addr = sock.recvfrom(65535)
+                    
+                    # Try to decompress, assuming it might be gzipped
+                    try:
+                        decompressed = gzip.decompress(data)
+                        data = decompressed
+                    except (gzip.BadGzipFile, OSError):
+                        # Not gzipped, treat as raw bytes
+                        pass
+
                     msg = json.loads(data.decode("utf-8"))
 
                     # 🔥 PRZEJŚCIE DO WĄTKU GUI
@@ -908,6 +918,8 @@ class ConcurrentTextEditor(QWidget):
         }
 
         payload = json.dumps(msg).encode("utf-8")
+        # Compress payload to avoid Message too long error
+        payload = gzip.compress(payload)
 
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.sendto(payload, (peer["ip"], peer["port"]))
