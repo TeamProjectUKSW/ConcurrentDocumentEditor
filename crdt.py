@@ -57,15 +57,28 @@ class RgaCrdt:
     def _visible_nodes_in_order(self) -> List[Node]:
 
         out: List[Node] = []
+        # Iterative DFS using an explicit stack
+        # Stack stores parent IDs. 
+        # Since we want to process children in order, and we pop from stack (LIFO),
+        # we need to push children in REVERSE order.
+        stack: List[CrdtId] = [HEAD]
 
-        def dfs(parent: CrdtId):
-            for cid in self.children.get(parent, []):
-                n = self.nodes[cid]
+        while stack:
+            parent_id = stack.pop()
+            
+            # If not HEAD, process the node itself
+            if parent_id != HEAD:
+                n = self.nodes[parent_id]
                 if not n.deleted:
                     out.append(n)
-                dfs(cid)
+            
+            # Get children
+            children = self.children.get(parent_id, [])
+            
+            # Push children to stack in reverse order so they are popped in correct order
+            for child_id in reversed(children):
+                stack.append(child_id)
 
-        dfs(HEAD)
         return out
 
     def render(self) -> str:
