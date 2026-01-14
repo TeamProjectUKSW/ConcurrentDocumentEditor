@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
-CrdtId = Tuple[str, int]
+CrdtId = Tuple[int, str]
 
-HEAD: CrdtId = ("HEAD", 0)
+HEAD: CrdtId = (0, "HEAD")
 
 
 @dataclass
@@ -38,7 +38,8 @@ class RgaCrdt:
         self.nodes[node_id] = Node(id=node_id, after=after, text=text, deleted=False)
 
         self.children.setdefault(after, []).append(node_id)
-        self.children[after].sort()
+        # Sort descending so newer nodes (higher counter) come first (left)
+        self.children[after].sort(reverse=True)
 
         self.children.setdefault(node_id, [])
         return True
@@ -117,8 +118,8 @@ class RgaCrdt:
                 crdt.children.setdefault(after_id, []).append(node_id)
             crdt.children.setdefault(node_id, [])
 
-        # Sort children for deterministic ordering
+        # Sort children for deterministic ordering (descending for RGA)
         for children_list in crdt.children.values():
-            children_list.sort()
+            children_list.sort(reverse=True)
 
         return crdt

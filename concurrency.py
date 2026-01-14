@@ -660,7 +660,7 @@ class ConcurrentTextEditor(QWidget):
     def next_op_id(self):
         """Generate a new CRDT operation ID as a tuple (counter, client_id)."""
         self.crdt_counter += 1
-        return (self.client_id, self.crdt_counter)
+        return (self.crdt_counter, self.client_id)
 
     def _get_visible_id_map(self):
         """Get mapping of cursor positions to CRDT node IDs."""
