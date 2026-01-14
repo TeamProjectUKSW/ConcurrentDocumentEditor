@@ -670,9 +670,16 @@ class ConcurrentTextEditor(QWidget):
             self._sync_text_from_crdt()
             self._move_cursor(self._get_cursor_position_from_node())
             return  # Don't let Qt handle it
-        elif event.text() and (not event.modifiers() or event.modifiers() == Qt.KeyboardModifier.ShiftModifier):
-            # Wysyłaj tylko drukowalne znaki, ignoruj skróty sterujące
-            if event.text() >= ' ':
+        
+        elif event.text():
+            # Allow text input if it's printable and not a system shortcut (Ctrl/Cmd)
+            # This allows AltGr (Polish chars) which often registers as AltModifier or GroupSwitchModifier
+            modifiers = event.modifiers()
+            is_control_shortcut = (modifiers & Qt.KeyboardModifier.ControlModifier) or \
+                                  (modifiers & Qt.KeyboardModifier.MetaModifier)
+            
+            # Check if printable char (>= space) and not a control shortcut
+            if event.text() >= ' ' and not is_control_shortcut:
                 self._broadcast_insert(index, event.text())
                 self._sync_text_from_crdt()
                 self._move_cursor(self._get_cursor_position_from_node())
