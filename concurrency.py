@@ -249,7 +249,11 @@ class ConcurrentTextEditor(QWidget):
         try:
             crdt_state = msg.get("crdt_state")
             if crdt_state:
-                self.crdt = RgaCrdt.from_dict(crdt_state)
+                # Keep old CRDT to resolve cursor ancestors if needed
+                old_crdt = self.crdt
+                new_crdt = RgaCrdt.from_dict(crdt_state)
+                
+                self.crdt = new_crdt
                 rendered = self.crdt.render()
                 print(f"[CRDT] SNAPSHOT RECEIVED: {len(crdt_state.get('nodes', []))} nodes")
                 
@@ -262,29 +266,57 @@ class ConcurrentTextEditor(QWidget):
                 self._update_lamport_clock(max_counter)
                 
                 self.text.setPlainText(rendered)
+                
+                # Clear pending ops - snapshot replaces everything
+                self.pending_ops.clear()
+                self.is_dirty = False
+
+                # Validate cursor_node against new CRDT state
+                if self.cursor_node != HEAD and self.cursor_node not in self.crdt.nodes:
+                    print(f"[SYNC] Cursor node {self.cursor_node} missing in snapshot, searching for ancestor in old graph.")
+                    
+                    # Walk up ancestors using OLD CRDT structure
+                    current_id = self.cursor_node
+                    found_ancestor = HEAD
+                    
+                    # Safety limit to avoid infinite loops if graph is broken
+                    for _ in range(1000):
+                        if current_id == HEAD:
+                            break
+                        
+                        # Look up in old_crdt
+                        if current_id not in old_crdt.nodes:
+                            # Should not happen if cursor was valid, but if so, abort
+                            break
+                            
+                        node = old_crdt.nodes[current_id]
+                        parent_id = node.after
+                        
+                        # Check if parent exists in NEW CRDT
+                        if parent_id in self.crdt.nodes:
+                            found_ancestor = parent_id
+                            break
+                        
+                        current_id = parent_id
+                    
+                    self.cursor_node = found_ancestor
+
+                # Restore cursor based on node ID (sticky)
+                new_pos = self._get_cursor_position_from_node()
+                cursor = self.text.textCursor()
+                cursor.setPosition(min(new_pos, len(self.text.toPlainText())))
+                self.text.setTextCursor(cursor)
+
             else:
                 # Fallback for old-style snapshots (just text)
                 text = msg.get("text", "")
                 print(f"[CRDT] SNAPSHOT RECEIVED (old style): text='{text[:50]}...'")
                 self.text.setPlainText(text)
                 self.crdt = RgaCrdt()
-            
-            # Clear pending ops - snapshot replaces everything
-            self.pending_ops.clear()
-            self.is_dirty = False
-
-            # Validate cursor_node against new CRDT state
-            if self.cursor_node != HEAD and self.cursor_node not in self.crdt.nodes:
-                print(f"[SYNC] Cursor node {self.cursor_node} missing in snapshot, falling back.")
-                # Walk up ancestors if possible, or just reset to HEAD
-                # For simplicity and safety after snapshot, reset to HEAD if missing
+                self.pending_ops.clear()
+                self.is_dirty = False
+                # Just reset cursor for legacy snapshots
                 self.cursor_node = HEAD
-
-            # Restore cursor based on node ID (sticky)
-            new_pos = self._get_cursor_position_from_node()
-            cursor = self.text.textCursor()
-            cursor.setPosition(min(new_pos, len(self.text.toPlainText())))
-            self.text.setTextCursor(cursor)
 
         finally:
             self.applying_remote = False
