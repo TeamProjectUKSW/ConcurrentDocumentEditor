@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtCore import pyqtSignal
+from editor import BaseTextEditor
 
 
 def get_all_local_ips():
@@ -48,7 +49,7 @@ def get_all_local_ips():
     return ips
 
 
-class ConcurrentTextEditor(QWidget):
+class ConcurrentTextEditor(BaseTextEditor):
     """
     A PyQt6-based concurrent text editor with CRDT and UDP file sharing support.
 
@@ -62,7 +63,6 @@ class ConcurrentTextEditor(QWidget):
         peers (dict): Dictionary of connected peers.
         crdt_counter (int): Counter for CRDT operations.
         applying_remote (bool): Flag to avoid broadcasting remote changes.
-        theme_state (int): Tracks current theme 0 = light, 1 = dark, 2 = cream 3 = mint.
         text (QTextEdit): Main text editing widget.
     """
 
@@ -71,6 +71,7 @@ class ConcurrentTextEditor(QWidget):
     def __init__(self):
         """Initialize the editor, GUI, network, and CRDT event handling."""
         super().__init__()
+        self.running = True  # in order to control when user want to close the app
         self.message_received.connect(self._handle_message)
         self.seen_invites = set()
 
@@ -89,27 +90,6 @@ class ConcurrentTextEditor(QWidget):
         self.chunk_buffer = {}
 
         self.is_dirty = False
-        main_layout = QVBoxLayout()
-        toolbar_layout = QHBoxLayout()
-        main_layout.addLayout(toolbar_layout)
-        self.setLayout(main_layout)
-
-        self.text = QTextEdit()
-        self.text.setAcceptRichText(False)
-        self.text.textChanged.connect(self._on_modified)
-        main_layout.addWidget(self.text)
-
-        self._add_toolbar_button(toolbar_layout, "Open", self.open_file)
-        self._add_toolbar_button(toolbar_layout, "Save", self.save_file)
-        self._add_toolbar_button(toolbar_layout, "Save as", self.saveas_file)
-        self._add_toolbar_button(toolbar_layout, "Share", self.share_file)
-        self._add_toolbar_button(toolbar_layout, "Disconnect", self.leave_session)
-        self._add_toolbar_button(toolbar_layout, "Add test", self.insert_test_text)
-        self._add_toolbar_button(toolbar_layout, "Change font", self.change_font)
-        self._add_toolbar_button(toolbar_layout, "Toggle theme", self.toggle_theme)
-
-        self.theme_state = 0
-        self.set_light_theme()
 
         self.get_shared_file()
 
@@ -120,129 +100,12 @@ class ConcurrentTextEditor(QWidget):
         self.text.keyPressEvent = self._on_key
 
         self.text.cursorPositionChanged.connect(self._on_cursor_changed)
+        self.text.installEventFilter(self)
 
     def _on_cursor_changed(self):
         """Update cursor_node when cursor position changes (click, navigation)."""
         if not self.applying_remote:
             self._update_cursor_node_from_position()
-
-    def _add_toolbar_button(self, layout, text, callback):
-        """
-        Add a QPushButton to the toolbar with a given label and callback.
-
-        Args:
-            layout (QLayout): The toolbar layout to add the button to.
-            text (str): Button label.
-            callback (function): Function to call when button is clicked.
-        """
-        btn = QPushButton(text)
-        btn.clicked.connect(callback)
-        layout.addWidget(btn)
-
-    def set_light_theme(self):
-        """Set a light theme for the editor."""
-        self.setStyleSheet("""
-            QWidget { background-color: #f9f9f9; color: #1e1e1e; }
-            QTextEdit { background-color: #ffffff; color: #000000; }
-            QPushButton { background-color: #e0e0e0; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #d0d0d0; }
-        """)
-        self.theme_state = 0
-
-    def set_dark_theme(self):
-        """Set a dark theme for the editor."""
-        self.setStyleSheet("""
-            QWidget { background-color: #2b2b2b; color: #f0f0f0; }
-            QTextEdit { background-color: #3c3f41; color: #f0f0f0; }
-            QPushButton { background-color: #505357; color: #f0f0f0; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #606367; }
-        """)
-        self.theme_state = 1
-
-    def set_cream_theme(self):
-        """Set a warm cream theme, easy on the eyes for text editing."""
-        self.setStyleSheet("""
-            QWidget { background-color: #fff8e7; color: #2e2e2e; }
-            QTextEdit { background-color: #fffdf4; color: #1e1e1e; }
-            QPushButton { background-color: #f0e6d2; color: #2e2e2e; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #e6dabe; }
-        """)
-        self.theme_state = 2
-
-    def set_mint_theme(self):
-        """Set a soft mint theme for a fresh look."""
-        self.setStyleSheet("""
-            QWidget { background-color: #e6f7f1; color: #1e1e1e; }
-            QTextEdit { background-color: #f0fcf9; color: #1e1e1e; }
-            QPushButton { background-color: #ccebe1; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #b3ded2; }
-        """)
-        self.theme_state = 3
-
-    def toggle_theme(self):
-        """Cycle through available themes"""
-        if self.theme_state == 0:
-            self.set_dark_theme()
-        elif self.theme_state == 1:
-            self.set_cream_theme()
-        elif self.theme_state == 2:
-            self.set_mint_theme()
-        else:
-            self.set_light_theme()
-
-    def change_font(self):
-        """Open a font selection dialog and apply the chosen font to the editor."""
-        font, ok = QFontDialog.getFont()
-        if ok:
-            self.text.setFont(font)
-
-    def _on_modified(self):
-        """Mark document as modified when text changes."""
-        self.is_dirty = True
-
-    def open_file(self):
-        """Open a text file and load its contents into the editor."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open file", "", "Text files (*.txt);;All files (*)"
-        )
-        if not file_path:
-            return
-        with open(file_path, "r", encoding="utf-8") as f:
-            self.text.setPlainText(f.read())
-        self.current_file_path = file_path
-        self.setWindowTitle(f"Text editor - {file_path}")
-        self.is_dirty = False
-
-    def save_file(self):
-        """Save current file, or prompt Save As if no file exists."""
-        if not getattr(self, "current_file_path", None):
-            return self.saveas_file()
-        content = self.text.toPlainText()
-        with open(self.current_file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        QMessageBox.information(self, "Saved", f"File saved:\n{self.current_file_path}")
-        self.is_dirty = False
-
-    def saveas_file(self):
-        """Open Save As dialog and save editor content to a chosen path."""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save file", "", "Text files (*.txt);;All files (*)"
-        )
-        if not file_path:
-            return
-        dir_name = os.path.dirname(file_path)
-        if dir_name and not os.path.exists(dir_name):
-            QMessageBox.critical(self, "Error", "Path does not exist!")
-            return
-        self.current_file_path = file_path
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(self.text.toPlainText())
-        QMessageBox.information(self, "Saved", f"File saved as:\n{file_path}")
-        self.is_dirty = False
-
-    def insert_test_text(self):
-        """Append sample text to the editor for testing purposes."""
-        self.text.append("Hello world!")
 
     def _apply_snapshot(self, msg):
         self.applying_remote = True
@@ -336,7 +199,7 @@ class ConcurrentTextEditor(QWidget):
             reply = QMessageBox.question(
                 self,
                 "Share request",
-                f"{msg.get('from_name', 'Inny użytkownik')} chce współdzielić dokument.\nAkceptujesz?",
+                f"{msg.get('from_name', 'Inny użytkownik')} wants to collaborate with the document.\nAccept?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
 
@@ -402,7 +265,7 @@ class ConcurrentTextEditor(QWidget):
 
         self._add_peer(new_peer_id, peer_ip, peer_port, new_peer_name)
 
-        QMessageBox.information(self, "Share", f"{new_peer_name} dołączył do sesji.")
+        QMessageBox.information(self, "Share", f"{new_peer_name} joined the session.")
 
         self._send_snapshot_to_peer(new_peer_id)
 
@@ -481,10 +344,11 @@ class ConcurrentTextEditor(QWidget):
                 print(f"[CHUNK] Error processing reassembled message: {e}")
 
     def leave_session(self):
+        self.running = False
         """Leave the current session, disconnect from peers, and continue offline."""
         if not self.peers:
             QMessageBox.information(
-                self, "Disconnect", "Nie jesteś połączony z żadną sesją."
+                self, "Disconnect", "You are not connected with any session."
             )
             return
 
@@ -496,7 +360,7 @@ class ConcurrentTextEditor(QWidget):
         self.seen_invites.clear()
 
         QMessageBox.information(
-            self, "Disconnect", "Rozłączono z sesji. Możesz kontynuować pracę lokalnie."
+            self, "Disconnect", "Disconnect with session. You can continue working locally."
         )
 
     def _handle_peer_leave(self, msg):
@@ -506,7 +370,7 @@ class ConcurrentTextEditor(QWidget):
             peer_name = self.peers[peer_id]["name"]
             del self.peers[peer_id]
 
-            QMessageBox.information(self, "Info", f"{peer_name} opuścił sesję.")
+            QMessageBox.information(self, "Info", f"{peer_name} leaved session.")
 
     def _handle_peer_announce(self, msg):
         """Handle incoming peer announcement and connect to the new peer."""
@@ -607,7 +471,7 @@ class ConcurrentTextEditor(QWidget):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind(("", self.user.port_listen))
             print(f"[UDP] Listening on {self.user.port_listen} ...")
-            while True:
+            while self.running:
                 try:
                     data, addr = sock.recvfrom(65535)
 
@@ -656,7 +520,7 @@ class ConcurrentTextEditor(QWidget):
                 except Exception:
                     pass
         QMessageBox.information(
-            self, "Share", "Zaproszenie wysłane. Czekam na odpowiedzi."
+            self, "Share", "Inivitation sent. Waiting for responses."
         )
 
     def _on_key(self, e):
@@ -1017,6 +881,11 @@ class ConcurrentTextEditor(QWidget):
             return "discard"
         return "cancel"
 
+    def eventFilter(self, obj, event):
+        if obj is self.text and event.type() == event.Type.KeyPress:
+            self._on_key(event)
+            return True
+        return super().eventFilter(obj, event)
 
 class User:
     """Network configuration for sending and receiving UDP messages."""

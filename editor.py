@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QFontDialog,
+    QComboBox,
+    QLabel
 )
 import os
 
@@ -31,101 +33,182 @@ class BaseTextEditor(QWidget):
         super().__init__()
         self.setWindowTitle("Text editor")
         self.resize(800, 600)
+
         self.current_file_path = None
         self.is_dirty = False
 
+        #Layouts
         main_layout = QVBoxLayout()
         toolbar_layout = QHBoxLayout()
         main_layout.addLayout(toolbar_layout)
         self.setLayout(main_layout)
 
+        #buttons
+        toolbar_layout.addWidget(self._btn("Open", self.open_file))
+        toolbar_layout.addWidget(self._btn("Save", self.save_file))
+        toolbar_layout.addWidget(self._btn("Save as", self.saveas_file))
+        toolbar_layout.addWidget(self._btn("Share", self.share_file))
+        toolbar_layout.addWidget(self._btn("Disconnect", self.leave_session))
+        toolbar_layout.addWidget(self._btn("Change font", self.change_font))
+
+        #themes
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems([
+            "Standard Light",
+            "Warm Cream",
+            "Dark Grey",
+            "Midnight Blue",
+            "Terminal Rose",
+            "Deep Charcoal",
+        ])
+        self.theme_combo.currentIndexChanged.connect(self.switch_theme)
+        toolbar_layout.addWidget(self.theme_combo)
+
+        #text editor
         self.text = QTextEdit()
         self.text.setAcceptRichText(False)
         self.text.textChanged.connect(self._on_modified)
         main_layout.addWidget(self.text)
 
-        btn_open = QPushButton("Open")
-        btn_open.clicked.connect(self.open_file)
-        toolbar_layout.addWidget(btn_open)
-
-        btn_save = QPushButton("Save")
-        btn_save.clicked.connect(self.save_file)
-        toolbar_layout.addWidget(btn_save)
-
-        btn_saveas = QPushButton("Save as")
-        btn_saveas.clicked.connect(self.saveas_file)
-        toolbar_layout.addWidget(btn_saveas)
-
-        btn_share = QPushButton("Share")
-        btn_share.clicked.connect(self.share_file)
-        toolbar_layout.addWidget(btn_share)
-
-        btn_test = QPushButton("Add test")
-        btn_test.clicked.connect(self.insert_test_text)
-        toolbar_layout.addWidget(btn_test)
-
-        btn_font = QPushButton("Change font")
-        btn_font.clicked.connect(self.change_font)
-        toolbar_layout.addWidget(btn_font)
-
-        btn_theme = QPushButton("Toggle theme")
-        btn_theme.clicked.connect(self.toggle_theme)
-        toolbar_layout.addWidget(btn_theme)
-
-        self.theme_state = 0
+        #theme initialisation
         self.set_light_theme()
 
+    #help methods
+    def _btn(self, label, slot):
+        """
+        Create a toolbar button with the given label and callback.
+
+        Args:
+            label (str): Text displayed on the button.
+            slot (callable): Function to be called when the button is clicked.
+
+        Returns:
+            QPushButton: Configured button instance.
+        """
+        btn = QPushButton(label)
+        btn.clicked.connect(slot)
+        return btn
+
+    #themes methods
     def set_light_theme(self):
-        """Set a light, high-contrast theme for the editor."""
+        """
+        Apply the standard light theme.
+
+        Uses a bright background with dark text, suitable for daytime use
+        and general-purpose text editing.
+        """
         self.setStyleSheet("""
             QWidget { background-color: #f9f9f9; color: #1e1e1e; }
-            QTextEdit { background-color: #ffffff; color: #000000; }
-            QPushButton { background-color: #e0e0e0; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #d0d0d0; }
+            QTextEdit { background-color: #ffffff; color: #000000; border: 1px solid #cccccc; }
+            QPushButton, QComboBox { background-color: #e0e0e0; color: #1e1e1e; border-radius: 4px; padding: 5px; }
+            QPushButton:hover, QComboBox:hover { background-color: #d0d0d0; }
         """)
-        self.theme_state = 0
-
-    def set_dark_theme(self):
-        """Set a dark theme suitable for low-light environments."""
-        self.setStyleSheet("""
-            QWidget { background-color: #2b2b2b; color: #f0f0f0; }
-            QTextEdit { background-color: #3c3f41; color: #f0f0f0; }
-            QPushButton { background-color: #505357; color: #f0f0f0; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #606367; }
-        """)
-        self.theme_state = 1
 
     def set_cream_theme(self):
-        """Set a warm cream theme that is easy on the eyes for reading text."""
-        self.setStyleSheet("""
-            QWidget { background-color: #fff8e7; color: #2e2e2e; }
-            QTextEdit { background-color: #fffdf4; color: #1e1e1e; }
-            QPushButton { background-color: #f0e6d2; color: #2e2e2e; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #e6dabe; }
-        """)
-        self.theme_state = 2
+        """
+        Apply a warm cream-colored theme.
 
-    def set_mint_theme(self):
-        """Set a soft mint theme for a fresh and relaxing look."""
+        Designed to reduce eye strain during long writing sessions by using
+        softer background colors and lower contrast.
+        """
         self.setStyleSheet("""
-            QWidget { background-color: #e6f7f1; color: #1e1e1e; }
-            QTextEdit { background-color: #f0fcf9; color: #1e1e1e; }
-            QPushButton { background-color: #ccebe1; color: #1e1e1e; border-radius: 6px; padding: 6px 12px; }
-            QPushButton:hover { background-color: #b3ded2; }
+            QWidget { background-color: #fff8e7; color: #3b3b3b; }
+            QTextEdit { background-color: #fffdf4; color: #2b2b2b; border: 1px solid #e6dabe; }
+            QPushButton, QComboBox { background-color: #f0e6d2; color: #3b3b3b; border-radius: 4px; padding: 5px; }
+            QPushButton:hover, QComboBox:hover { background-color: #e6dabe; }
         """)
-        self.theme_state = 3
 
-    def toggle_theme(self):
-        """Cycle through available themes: light → dark → cream → mint → light."""
-        if self.theme_state == 0:
-            self.set_dark_theme()
-        elif self.theme_state == 1:
-            self.set_cream_theme()
-        elif self.theme_state == 2:
-            self.set_mint_theme()
-        else:
+    def set_dark_grey_theme(self):
+        """
+        Apply a classic dark grey theme.
+
+        Suitable for low-light environments and users who prefer a traditional
+        dark editor appearance.
+        """
+        self.setStyleSheet("""
+            QWidget { background-color: #2b2b2b; color: #f0f0f0; }
+            QTextEdit { background-color: #3c3f41; color: #f0f0f0; border: 1px solid #555; }
+            QPushButton, QComboBox { background-color: #505357; color: #f0f0f0; border-radius: 4px; padding: 5px; }
+            QPushButton:hover, QComboBox:hover { background-color: #606367; }
+        """)
+
+    def set_midnight_theme(self):
+        """
+        Apply a midnight blue theme.
+
+        Inspired by solarized and midnight-style color schemes, offering a calm,
+        cool-toned dark interface for extended focus.
+        """
+        self.setStyleSheet("""
+            QWidget { background-color: #0f1f2c; color: #d0e0f0; }
+            QTextEdit { background-color: #162a3b; color: #e6f2ff; border: 1px solid #2a4d69; }
+            QPushButton, QComboBox { background-color: #1c3b57; color: #d0e0f0; border-radius: 4px; padding: 5px; }
+            QPushButton:hover, QComboBox:hover { background-color: #264d70; }
+        """)
+
+    def set_terminal_theme(self):
+        """
+        Apply a soft rose terminal-style theme.
+
+        Uses a dark background with muted rose-colored text, inspired by
+        retro terminals and modern dusk-style color palettes.
+        """
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #141216;
+                color: #d8a1b5;
+            }
+
+            QTextEdit {
+                background-color: #1a161c;
+                color: #e2b4c3;
+                border: 1px solid #3a2a34;
+                font-family: Consolas, Menlo, Monaco, monospace;
+            }
+
+            QPushButton, QComboBox {
+                background-color: #211b22;
+                color: #d8a1b5;
+                border: 1px solid #4a3440;
+                border-radius: 4px;
+                padding: 5px;
+            }
+
+            QPushButton:hover, QComboBox:hover {
+                background-color: #2c2330;
+            }
+        """)
+
+    def set_charcoal_theme(self):
+        """
+        Apply a deep charcoal theme.
+
+        Provides very high contrast and minimal distraction, optimized for
+        users who prefer an extremely dark interface.
+        """
+        self.setStyleSheet("""
+            QWidget { background-color: #121212; color: #e0e0e0; }
+            QTextEdit { background-color: #1e1e1e; color: #ffffff; border: 1px solid #333; }
+            QPushButton, QComboBox { background-color: #333333; color: #ffffff; border-radius: 4px; padding: 5px; }
+            QPushButton:hover, QComboBox:hover { background-color: #444444; }
+        """)
+
+    def switch_theme(self, index):
+        """Switch theme based on the combo box index."""
+        if index == 0:
             self.set_light_theme()
+        elif index == 1:
+            self.set_cream_theme()
+        elif index == 2:
+            self.set_dark_grey_theme()
+        elif index == 3:
+            self.set_midnight_theme()
+        elif index == 4:
+            self.set_terminal_theme()
+        elif index == 5:
+            self.set_charcoal_theme()
 
+    #editor methods
     def change_font(self):
         """
         Open a font selection dialog and apply the selected font to the editor.
@@ -193,13 +276,22 @@ class BaseTextEditor(QWidget):
         self.is_dirty = False
         self.setWindowTitle(f"Text editor - {self.current_file_path}")
 
-    def insert_test_text(self):
-        """Insert sample text at the end of the editor."""
-        self.text.append("Hello world!")
+    # def insert_test_text(self):
+    #     """Insert sample text at the end of the editor."""
+    #     self.text.append("Hello world!")
 
     def share_file(self):
         """
         Placeholder for file sharing logic.
         In the base editor, this method does nothing.
+        """
+        pass
+
+    def leave_session(self):
+        """
+        Disconnect from a collaborative session.
+
+        Base implementation does nothing.
+        Subclasses may override this to provide custom behavior.
         """
         pass
