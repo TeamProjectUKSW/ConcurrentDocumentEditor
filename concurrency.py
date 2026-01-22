@@ -71,7 +71,6 @@ class ConcurrentTextEditor(BaseTextEditor):
     def __init__(self):
         """Initialize the editor, GUI, network, and CRDT event handling."""
         super().__init__()
-        self.running = True  # in order to control when user want to close the app
         self.message_received.connect(self._handle_message)
         self.seen_invites = set()
 
@@ -344,7 +343,6 @@ class ConcurrentTextEditor(BaseTextEditor):
                 print(f"[CHUNK] Error processing reassembled message: {e}")
 
     def leave_session(self):
-        self.running = False
         """Leave the current session, disconnect from peers, and continue offline."""
         if not self.peers:
             QMessageBox.information(
@@ -471,7 +469,7 @@ class ConcurrentTextEditor(BaseTextEditor):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.bind(("", self.user.port_listen))
             print(f"[UDP] Listening on {self.user.port_listen} ...")
-            while self.running:
+            while True:
                 try:
                     data, addr = sock.recvfrom(65535)
 
