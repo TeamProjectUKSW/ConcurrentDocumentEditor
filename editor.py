@@ -7,8 +7,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QFontDialog,
-    QComboBox,
-    QLabel
+    QComboBox
 )
 import os
 

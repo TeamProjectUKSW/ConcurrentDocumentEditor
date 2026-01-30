@@ -3,20 +3,13 @@ import threading
 import json
 import uuid
 import time
-import os
 import netifaces
 import gzip
 import base64
 from crdt import RgaCrdt, HEAD
 from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
     QTextEdit,
-    QPushButton,
-    QFileDialog,
     QMessageBox,
-    QFontDialog,
     QApplication,
 )
 from PyQt6.QtCore import Qt, QTimer
